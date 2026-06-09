@@ -1,0 +1,35 @@
+{
+  "name": "@openapi-agent/cli",
+  "version": "0.1.0",
+  "description": "Host an MCP server + API proxy from any OpenAPI spec. Like Drizzle Studio, but for APIs.",
+  "type": "module",
+  "bin": {
+    "openapi-agent": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "bun --hot cli.ts",
+    "build": "bun build ./cli.ts ./index.ts --outdir=dist --target=bun",
+    "start": "bun dist/cli.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": ["mcp", "openapi", "api", "agent", "claude", "ai"],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/js-yaml": "^4.0.9",
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "js-yaml": "^4.2.0"
+  },
+  "peerDependencies": {
+    "bun": ">=1.0.0"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  }
+}

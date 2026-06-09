@@ -1,0 +1,48 @@
+# ── Dependencies ────────────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ── Build outputs ────────────────────────────────────────────────────
+out/
+dist/
+.vite/
+.wrangler/
+*.tgz
+*.tsbuildinfo
+
+# ── TanStack ─────────────────────────────────────────────────────────
+# Route tree is generated — commit it so CI has it without running the generator
+# packages/studio/src/routeTree.gen.ts  <-- intentionally NOT ignored
+
+# ── Data / DB ────────────────────────────────────────────────────────
+packages/cli/data/*.db
+packages/cli/data/*.db-shm
+packages/cli/data/*.db-wal
+
+# ── Logs ─────────────────────────────────────────────────────────────
+logs/
+*.log
+*.log.*
+
+# ── Environment ───────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Coverage ─────────────────────────────────────────────────────────
+coverage/
+*.lcov
+
+# ── Caches ───────────────────────────────────────────────────────────
+.eslintcache
+.cache/
+*.tsbuildinfo
+
+# ── OS / IDE ──────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/settings.json
+
+# ── Cloudflare ────────────────────────────────────────────────────────
+.wrangler/

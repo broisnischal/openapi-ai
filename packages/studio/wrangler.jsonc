@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "openapi-studio",
+  "account_id": "16b2c363a412bfaaec2a5a2572964728",
+  "compatibility_date": "2025-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "@tanstack/react-start/server-entry",
+  "preview_urls": true,
+
+  // Custom domain — zone already configured in Cloudflare
+  "routes": [{ "pattern": "studio.stroke.click", "custom_domain": true }],
+
+  // VITE_CLI_BASE_URL is a build-time env var baked into the client bundle.
+  // It is NOT settable here at runtime — set it via .env.production or the
+  // deploy script before running `bun run build`.
+  "vars": {
+    "NODE_ENV": "production"
+  },
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true
+    }
+  }
+}
