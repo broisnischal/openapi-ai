@@ -4,12 +4,12 @@ import { ChevronRight, ChevronDown } from 'lucide-react';
 // ── Collapsible JSON tree (Insomnia-style fold/unfold) ───────────────────────
 
 const COLORS = {
-  key: 'var(--json-key, #79b8ff)',
-  string: 'var(--json-string, #9ecbff)',
-  number: 'var(--json-number, #f8c555)',
-  boolean: 'var(--json-bool, #b392f0)',
-  null: 'var(--placeholder-foreground)',
-  punct: 'var(--muted-foreground)',
+  key:     'var(--json-key,    #7dd3fc)',
+  string:  'var(--json-string, #86efac)',
+  number:  'var(--json-number, #fde68a)',
+  boolean: 'var(--json-bool,   #c4b5fd)',
+  null:    'var(--placeholder-foreground)',
+  punct:   'var(--muted-foreground)',
 };
 
 function Primitive({ value }: { value: unknown }) {

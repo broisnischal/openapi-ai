@@ -179,3 +179,113 @@ function extractSecuritySchemes(doc: Record<string, unknown>): ParsedSpec['secur
   }
   return result;
 }
+
+export interface SuggestedVar {
+  key: string;
+  value: string;
+  description: string;
+  source: 'server' | 'auth' | 'path';
+}
+
+function toEnvKey(str: string): string {
+  return str
+    .replace(/[^a-zA-Z0-9]+(.)/g, (_, c: string) => c.toUpperCase())
+    .replace(/^[A-Z]/, (c: string) => c.toLowerCase())
+    .replace(/[^a-zA-Z0-9_]/g, '')
+    || str.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+}
+
+export function extractSuggestedVars(rawText: string, baseUrl: string): SuggestedVar[] {
+  let raw: Record<string, unknown>;
+  try {
+    raw = rawText.trimStart().startsWith('{')
+      ? JSON.parse(rawText)
+      : (yaml.load(rawText) as Record<string, unknown>);
+  } catch { return []; }
+
+  const vars: SuggestedVar[] = [];
+  const seen = new Set<string>();
+
+  const add = (key: string, value: string, description: string, source: SuggestedVar['source']) => {
+    const k = key.trim();
+    if (!k || seen.has(k)) return;
+    seen.add(k);
+    vars.push({ key: k, value, description, source });
+  };
+
+  // 1. Base URL
+  if (baseUrl) add('baseUrl', baseUrl, 'API base URL', 'server');
+
+  // 2. Server template variables
+  type ServerDef = { url: string; variables?: Record<string, { default?: string; description?: string }> };
+  const servers = (raw.servers as ServerDef[]) ?? [];
+  for (const server of servers.slice(0, 5)) {
+    if (!server.variables) continue;
+    for (const [key, def] of Object.entries(server.variables)) {
+      add(toEnvKey(key), def.default ?? '', def.description ?? `Server variable: ${key}`, 'server');
+    }
+  }
+
+  // 3. Security schemes
+  const components = (raw.components as Record<string, unknown>) ?? {};
+  const secSchemes = (components.securitySchemes as Record<string, Record<string, unknown>>) ?? {};
+
+  for (const [schemeName, scheme] of Object.entries(secSchemes)) {
+    if (!scheme || typeof scheme !== 'object') continue;
+    const type = scheme.type as string;
+    const slug = toEnvKey(schemeName);
+
+    if (type === 'http') {
+      const httpScheme = ((scheme.scheme as string) ?? '').toLowerCase();
+      if (httpScheme === 'bearer') {
+        add(`${slug}Token`, '', `Bearer token for ${schemeName}`, 'auth');
+      } else if (httpScheme === 'basic') {
+        add(`${slug}Username`, '', `Username for ${schemeName}`, 'auth');
+        add(`${slug}Password`, '', `Password for ${schemeName}`, 'auth');
+      }
+    } else if (type === 'apiKey') {
+      const keyName = (scheme.name as string) ?? schemeName;
+      add(toEnvKey(keyName), '', `API key header/param: ${keyName}`, 'auth');
+    } else if (type === 'oauth2') {
+      add(`${slug}ClientId`, '', `OAuth2 client ID for ${schemeName}`, 'auth');
+      add(`${slug}ClientSecret`, '', `OAuth2 client secret for ${schemeName}`, 'auth');
+      add(`${slug}Token`, '', `OAuth2 access token for ${schemeName}`, 'auth');
+    } else if (type === 'openIdConnect') {
+      add(`${slug}Token`, '', `Access token for ${schemeName}`, 'auth');
+    }
+  }
+
+  // 4. Repeated path parameters (appear in >= 15% of paths or >= 3 paths)
+  const paths = (raw.paths as Record<string, Record<string, unknown>>) ?? {};
+  const pathKeys = Object.keys(paths);
+  const paramFreq: Record<string, number> = {};
+
+  for (const [pathStr, pathItem] of Object.entries(paths)) {
+    if (!pathItem || typeof pathItem !== 'object') continue;
+    const params = (pathItem.parameters as Array<{ name: string; in: string }>) ?? [];
+    const seenInPath = new Set<string>();
+    for (const p of params) {
+      if (p.in === 'path' && p.name && !seenInPath.has(p.name)) {
+        seenInPath.add(p.name);
+        paramFreq[p.name] = (paramFreq[p.name] ?? 0) + 1;
+      }
+    }
+    // Also extract {params} from the path string itself
+    for (const [, param] of pathStr.matchAll(/\{([^}]+)\}/g)) {
+      if (!param) continue;
+      if (!seenInPath.has(param)) {
+        seenInPath.add(param);
+        paramFreq[param] = (paramFreq[param] ?? 0) + 1;
+      }
+    }
+  }
+
+  const threshold = Math.max(3, Math.floor(pathKeys.length * 0.15));
+  for (const [name, count] of Object.entries(paramFreq)) {
+    if (count >= threshold) {
+      add(toEnvKey(name), '', `Common path param: {${name}}`, 'path');
+    }
+  }
+
+  return vars;
+}

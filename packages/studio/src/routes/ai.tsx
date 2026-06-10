@@ -5,7 +5,7 @@ import {
   Bot, User, Sparkles, Trash2, ChevronDown, ChevronRight,
   Zap, Globe, Search, FileCode, Terminal, Check, X,
   Plus, MessageSquare, Clock, Wrench, Shield, KeyRound, UserCheck,
-  AlertTriangle, Wifi,
+  AlertTriangle, Wifi, Activity, Plug,
 } from 'lucide-react';
 import { Markdown } from '../components/Markdown';
 import { ChatComposer } from '../components/ChatComposer';
@@ -25,16 +25,17 @@ interface StoredChat { id: string; title: string; messages: Message[]; createdAt
 // ─── Tool metadata ────────────────────────────────────────────────────────────
 
 const TOOL_META: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
-  search_endpoints:    { label: 'Search Endpoints',  icon: <Search className="size-3" />,    color: 'var(--muted-foreground)' },
-  get_endpoint_schema: { label: 'Get Schema',        icon: <FileCode className="size-3" />,  color: 'var(--muted-foreground)' },
-  execute_api_request: { label: 'Execute Request',   icon: <Terminal className="size-3" />,  color: 'var(--muted-foreground)' },
-  fetch_url:           { label: 'Fetch URL',         icon: <Globe className="size-3" />,    color: 'var(--muted-foreground)' },
-  dns_lookup:          { label: 'DNS Lookup',        icon: <Wifi className="size-3" />,     color: 'var(--muted-foreground)' },
-  get_recent_logs:     { label: 'Recent Logs',       icon: <Clock className="size-3" />,    color: 'var(--muted-foreground)' },
-  run_security_check:  { label: 'Security Check',    icon: <AlertTriangle className="size-3" />, color: 'var(--muted-foreground)' },
-  list_auth_profiles:  { label: 'List Auth Profiles', icon: <Shield className="size-3" />,  color: 'var(--muted-foreground)' },
-  set_active_auth:     { label: 'Switch Auth',       icon: <UserCheck className="size-3" />, color: 'var(--muted-foreground)' },
-  save_auth_token:     { label: 'Save Auth Token',   icon: <KeyRound className="size-3" />, color: 'var(--muted-foreground)' },
+  search_endpoints:    { label: 'Search Endpoints',  icon: <Search className="size-3" />,       color: '#3b82f6' },
+  get_endpoint_schema: { label: 'Get Schema',        icon: <FileCode className="size-3" />,     color: '#0ea5e9' },
+  execute_api_request: { label: 'Execute Request',   icon: <Terminal className="size-3" />,     color: '#10b981' },
+  fetch_url:           { label: 'Fetch URL',         icon: <Globe className="size-3" />,        color: '#f59e0b' },
+  dns_lookup:          { label: 'DNS Lookup',        icon: <Wifi className="size-3" />,         color: '#a855f7' },
+  ping_host:           { label: 'Ping / Reach',      icon: <Plug className="size-3" />,         color: '#22c55e' },
+  get_recent_logs:     { label: 'Recent Logs',       icon: <Activity className="size-3" />,     color: '#3b82f6' },
+  run_security_check:  { label: 'Security Check',    icon: <AlertTriangle className="size-3" />, color: '#ef4444' },
+  list_auth_profiles:  { label: 'List Auth Profiles', icon: <Shield className="size-3" />,      color: '#8b5cf6' },
+  set_active_auth:     { label: 'Switch Auth',       icon: <UserCheck className="size-3" />,    color: '#8b5cf6' },
+  save_auth_token:     { label: 'Save Auth Token',   icon: <KeyRound className="size-3" />,     color: '#f59e0b' },
 };
 
 // ─── IDB helpers ──────────────────────────────────────────────────────────────
@@ -316,13 +317,29 @@ function HistoryPanel({
 
 // ─── Starter prompts ──────────────────────────────────────────────────────────
 
-const STARTERS = [
-  { label: 'Show all GET endpoints', icon: <Search className="size-3.5" /> },
-  { label: 'How do I authenticate?', icon: <FileCode className="size-3.5" /> },
-  { label: 'Test the health check endpoint', icon: <Terminal className="size-3.5" /> },
-  { label: 'Check for security issues', icon: <Sparkles className="size-3.5" /> },
-  { label: 'Generate a code example', icon: <FileCode className="size-3.5" /> },
-  { label: 'Find the create user endpoint', icon: <Search className="size-3.5" /> },
+const STARTER_GROUPS = [
+  {
+    label: 'API',
+    items: [
+      { label: 'Show all GET endpoints',        icon: <Search className="size-3.5" /> },
+      { label: 'How do I authenticate?',         icon: <FileCode className="size-3.5" /> },
+      { label: 'Test the health check endpoint', icon: <Terminal className="size-3.5" /> },
+      { label: 'Check for security issues',      icon: <AlertTriangle className="size-3.5" /> },
+      { label: 'Generate a code example',        icon: <FileCode className="size-3.5" /> },
+      { label: 'Find the create user endpoint',  icon: <Search className="size-3.5" /> },
+    ],
+  },
+  {
+    label: 'Network',
+    items: [
+      { label: 'Ping the API server',            icon: <Plug className="size-3.5" /> },
+      { label: 'DNS lookup for the API host',    icon: <Wifi className="size-3.5" /> },
+      { label: 'Dig MX records for this domain', icon: <Wifi className="size-3.5" /> },
+      { label: 'Is the API reachable on port 443?', icon: <Activity className="size-3.5" /> },
+      { label: 'Show recent errors in the logs', icon: <Activity className="size-3.5" /> },
+      { label: 'Check TLS / SSL for the host',   icon: <Globe className="size-3.5" /> },
+    ],
+  },
 ];
 
 // ─── AiPage ───────────────────────────────────────────────────────────────────
@@ -341,6 +358,9 @@ function AiPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
 
   useEffect(() => { getAllChats().then(setChatList).catch(() => {}); }, []);
 
@@ -369,6 +389,17 @@ function AiPage() {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [historyOpen]);
+
+  const stop = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+  };
+
+  const handleScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    setShowScrollBtn(el.scrollHeight - el.scrollTop - el.clientHeight > 120);
+  };
 
   const startNewChat = () => {
     setMessages([]); setChatId(null);
@@ -401,11 +432,15 @@ function AiPage() {
     setLiveToolCalls([]);
     setStreamingContent('');
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
       const res = await fetch(`${CLI_BASE_URL}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ messages: next.map(m => ({ role: m.role, content: m.content })) }),
+        signal: controller.signal,
       });
 
       if (!res.ok || !res.body) {
@@ -485,20 +520,32 @@ function AiPage() {
         }
       }
     } catch (e) {
-      setMessages(prev => [...prev, { id: newId('f'), role: 'assistant', content: `**Failed to reach AI:** ${String(e)}` }]);
-      setStreamingContent('');
-      setLiveToolCalls([]);
+      if (e instanceof Error && e.name === 'AbortError') {
+        setStreamingContent(prev => {
+          if (prev.trim()) {
+            setMessages(msgs => [...msgs, { id: newId('a'), role: 'assistant', content: prev }]);
+          }
+          return '';
+        });
+        setLiveToolCalls([]);
+      } else {
+        setMessages(prev => [...prev, { id: newId('f'), role: 'assistant', content: `**Failed to reach AI:** ${String(e)}` }]);
+        setStreamingContent('');
+        setLiveToolCalls([]);
+      }
     } finally {
       setLoading(false);
       setLoadingPhase(null);
       setInfoMsg('');
+      abortRef.current = null;
+      setTimeout(() => composerRef.current?.focus(), 50);
     }
   };
 
   const hasMessages = messages.length > 0 || loading;
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-[var(--background)]">
+    <div className="relative flex h-full flex-col overflow-hidden bg-[var(--background)]">
       {/* Header */}
       <header className="flex shrink-0 items-center gap-2.5 border-b border-[var(--border)] px-4 py-2.5">
         <div className="flex size-[26px] items-center justify-center rounded-lg border border-[var(--border)] bg-[color-mix(in_srgb,var(--foreground)_8%,transparent)]">
@@ -544,29 +591,39 @@ function AiPage() {
       </header>
 
       {/* Messages */}
-      <div className="hide-scrollbar flex flex-1 flex-col gap-5 overflow-auto px-5 py-5">
+      <div ref={scrollContainerRef} onScroll={handleScroll} className="hide-scrollbar flex flex-1 flex-col gap-5 overflow-auto px-5 py-5">
         {!hasMessages ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
+          <div className="flex flex-1 flex-col items-center justify-center gap-5 py-8 text-center">
             <div className="flex size-14 items-center justify-center rounded-2xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--foreground)_6%,transparent)]">
               <Sparkles className="size-6 text-[var(--foreground)]" />
             </div>
             <div>
               <div className="mb-1.5 text-[15px] font-semibold text-[var(--foreground)]">Ask anything about your API</div>
-              <div className="mx-auto max-w-[340px] text-[12.5px] leading-relaxed text-[var(--muted-foreground)]">
-                Search endpoints, run live requests, check security, generate code, and more.
+              <div className="mx-auto max-w-[360px] text-[12.5px] leading-relaxed text-[var(--muted-foreground)]">
+                Search endpoints, run live requests, DNS lookups, ping hosts, check security, and more.
               </div>
             </div>
-            <div className="mt-1 flex flex-wrap justify-center gap-2">
-              {STARTERS.map(s => (
-                <button
-                  key={s.label}
-                  type="button"
-                  onClick={() => setInput(s.label)}
-                  className="flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--border)] bg-[color-mix(in_srgb,var(--foreground)_4%,transparent)] px-3.5 py-1.5 text-[11.5px] text-[var(--foreground)] transition-colors hover:border-[var(--border-hover)] hover:bg-[var(--elevated)]"
-                >
-                  {s.icon}
-                  {s.label}
-                </button>
+            <div className="flex w-full max-w-[580px] flex-col gap-4 px-4">
+              {STARTER_GROUPS.map(group => (
+                <div key={group.label}>
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="text-[10.5px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">{group.label}</span>
+                    <div className="h-px flex-1 bg-[var(--border)]" />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {group.items.map(s => (
+                      <button
+                        key={s.label}
+                        type="button"
+                        onClick={() => setInput(s.label)}
+                        className="flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--border)] bg-[color-mix(in_srgb,var(--foreground)_4%,transparent)] px-3.5 py-1.5 text-[11.5px] text-[var(--foreground)] transition-colors hover:border-[var(--border-hover)] hover:bg-[var(--elevated)]"
+                      >
+                        {s.icon}
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
           </div>
@@ -584,9 +641,21 @@ function AiPage() {
         <div ref={bottomRef} />
       </div>
 
+      {showScrollBtn && (
+        <div className="absolute bottom-[90px] right-5 z-10">
+          <button
+            onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
+            className="flex items-center justify-center w-8 h-8 rounded-full border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] shadow-md hover:text-[var(--foreground)] hover:border-[var(--border-hover)] transition-colors"
+            title="Scroll to bottom"
+          >
+            <ChevronDown className="size-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Composer */}
       <footer className="shrink-0 border-t border-[var(--border)] bg-[var(--background)] px-4 py-3">
-        <ChatComposer ref={composerRef} value={input} onChange={setInput} onSubmit={send} loading={loading} />
+        <ChatComposer ref={composerRef} value={input} onChange={setInput} onSubmit={send} onStop={stop} loading={loading} />
       </footer>
     </div>
   );

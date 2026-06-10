@@ -3,11 +3,12 @@ import { useEffect, useRef, useState } from 'react';
 import { apiClient, CLI_BASE_URL, cliLink } from '../lib/api';
 import { cacheInvalidateSpec } from '../lib/cache';
 import { cn } from '../lib/utils';
+import { saveEnvironment, listEnvironments, type Environment, type EnvVar, ENV_COLORS } from '../lib/env';
 import {
   RefreshCw, Copy, Check, ExternalLink,
   Zap, Globe, ArrowUpRight, CheckCircle,
   Upload, Link2, FileJson, FileCode2, X,
-  Bot, Activity,
+  Bot, Activity, Layers, Eye, EyeOff,
 } from 'lucide-react';
 
 export const Route = createFileRoute('/')({ component: OverviewPage });
@@ -21,7 +22,142 @@ interface Status {
 
 // ─── Spec Loader ──────────────────────────────────────────────────────────────
 type LoadState = 'idle' | 'loading' | 'success' | 'error';
-interface LoadResult { spec?: { title: string; version: string; baseUrl: string }; endpointCount?: number; error?: string; }
+
+interface SuggestedVar {
+  key: string;
+  value: string;
+  description: string;
+  source: 'server' | 'auth' | 'path';
+}
+
+interface LoadResult {
+  spec?: { title: string; version: string; baseUrl: string };
+  endpointCount?: number;
+  error?: string;
+  suggestedVars?: SuggestedVar[];
+}
+
+function EnvImportModal({
+  specTitle,
+  vars,
+  onConfirm,
+  onSkip,
+}: {
+  specTitle: string;
+  vars: SuggestedVar[];
+  onConfirm: (envName: string, editedVars: SuggestedVar[]) => Promise<void>;
+  onSkip: () => void;
+}) {
+  const [envName, setEnvName] = useState(`${specTitle} – Default`);
+  const [editedVars, setEditedVars] = useState<SuggestedVar[]>(vars);
+  const [saving, setSaving] = useState(false);
+  const [showSecret, setShowSecret] = useState<Record<number, boolean>>({});
+
+  const updateVar = (i: number, value: string) => {
+    setEditedVars(prev => prev.map((v, idx) => idx === i ? { ...v, value } : v));
+  };
+
+  const handleConfirm = async () => {
+    setSaving(true);
+    await onConfirm(envName, editedVars);
+    setSaving(false);
+  };
+
+  const SOURCE_COLORS: Record<SuggestedVar['source'], string> = {
+    server: 'var(--info)',
+    auth:   'var(--warning)',
+    path:   'var(--success)',
+  };
+  const SOURCE_LABELS: Record<SuggestedVar['source'], string> = {
+    server: 'server',
+    auth:   'auth',
+    path:   'path',
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)' }}>
+      <div className="w-full max-w-[540px] rounded-xl border border-[var(--border)] bg-[var(--popover)] shadow-2xl flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="flex items-start gap-3 p-5 border-b border-[var(--border)]">
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'var(--accent-dim)' }}>
+            <Layers className="size-4" style={{ color: 'var(--accent)' }} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[14px] font-semibold text-[var(--foreground)]">Import Environment Variables</div>
+            <div className="text-[12px] text-[var(--muted-foreground)] mt-0.5">
+              Found <strong className="text-[var(--foreground)]">{vars.length}</strong> variables in <strong className="text-[var(--foreground)]">{specTitle}</strong>. Review and create an environment.
+            </div>
+          </div>
+          <button onClick={onSkip} className="flex-shrink-0 p-1 rounded hover:bg-[var(--elevated)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors border-0 bg-transparent cursor-pointer">
+            <X className="size-4" />
+          </button>
+        </div>
+
+        {/* Variable list */}
+        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2">
+          {editedVars.map((v, i) => (
+            <div key={i} className="flex items-center gap-2.5 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2.5">
+              {/* Source badge */}
+              <span
+                className="flex-shrink-0 text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
+                style={{
+                  color: SOURCE_COLORS[v.source],
+                  background: `color-mix(in srgb, ${SOURCE_COLORS[v.source]} 12%, transparent)`,
+                }}
+              >
+                {SOURCE_LABELS[v.source]}
+              </span>
+              {/* Key */}
+              <span className="font-mono text-[12px] text-[var(--foreground)] flex-shrink-0 min-w-[120px] max-w-[180px] truncate" title={v.key}>
+                {`{{${v.key}}}`}
+              </span>
+              {/* Value input */}
+              <div className="flex-1 flex items-center gap-1 min-w-0">
+                <input
+                  type={v.source === 'auth' && !showSecret[i] ? 'password' : 'text'}
+                  className="input h-6 text-[12px] flex-1 min-w-0 font-mono"
+                  value={v.value}
+                  onChange={e => updateVar(i, e.target.value)}
+                  placeholder={v.source === 'auth' ? '••••••••' : v.value || 'empty'}
+                />
+                {v.source === 'auth' && (
+                  <button
+                    type="button"
+                    onClick={() => setShowSecret(s => ({ ...s, [i]: !s[i] }))}
+                    className="flex-shrink-0 p-0.5 text-[var(--placeholder-foreground)] hover:text-[var(--muted-foreground)] transition-colors border-0 bg-transparent cursor-pointer"
+                  >
+                    {showSecret[i] ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 border-t border-[var(--border)] flex items-center gap-3">
+          <input
+            className="input flex-1 h-8 text-[13px]"
+            value={envName}
+            onChange={e => setEnvName(e.target.value)}
+            placeholder="Environment name"
+          />
+          <button type="button" onClick={onSkip} className="btn btn-ghost btn-sm flex-shrink-0">
+            Skip
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={saving || !envName.trim()}
+            className="btn btn-primary btn-sm flex-shrink-0"
+          >
+            {saving ? 'Creating…' : 'Create Environment'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function SpecLoader({ onLoaded }: { onLoaded: () => void }) {
   const [tab, setTab] = useState<'file' | 'url'>('file');
@@ -30,6 +166,8 @@ function SpecLoader({ onLoaded }: { onLoaded: () => void }) {
   const [url, setUrl] = useState('');
   const [state, setState] = useState<LoadState>('idle');
   const [result, setResult] = useState<LoadResult | null>(null);
+  const [pendingVars, setPendingVars] = useState<SuggestedVar[] | null>(null);
+  const [pendingTitle, setPendingTitle] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const doUpload = async (f: File) => {
@@ -43,7 +181,12 @@ function SpecLoader({ onLoaded }: { onLoaded: () => void }) {
       });
       setResult(r); setState('success');
       await cacheInvalidateSpec();
-      setTimeout(() => onLoaded(), 600);
+      if (r.suggestedVars && r.suggestedVars.length > 0) {
+        setPendingVars(r.suggestedVars);
+        setPendingTitle(r.spec?.title ?? 'API');
+      } else {
+        setTimeout(() => onLoaded(), 600);
+      }
     } catch (e) {
       setResult({ error: e instanceof Error ? e.message : String(e) });
       setState('error');
@@ -61,11 +204,48 @@ function SpecLoader({ onLoaded }: { onLoaded: () => void }) {
       });
       setResult(r); setState('success');
       await cacheInvalidateSpec();
-      setTimeout(() => onLoaded(), 600);
+      if (r.suggestedVars && r.suggestedVars.length > 0) {
+        setPendingVars(r.suggestedVars);
+        setPendingTitle(r.spec?.title ?? 'API');
+      } else {
+        setTimeout(() => onLoaded(), 600);
+      }
     } catch (e) {
       setResult({ error: e instanceof Error ? e.message : String(e) });
       setState('error');
     }
+  };
+
+  const handleEnvConfirm = async (envName: string, editedVars: SuggestedVar[]) => {
+    const existing = await listEnvironments();
+    const existingEnv = existing.find(e => e.name.toLowerCase() === envName.toLowerCase());
+
+    const envVars: EnvVar[] = editedVars.map(v => ({
+      key: v.key,
+      value: v.value,
+      enabled: true,
+    }));
+
+    if (existingEnv) {
+      const existingKeys = new Set(existingEnv.vars.map(v => v.key));
+      const merged = [
+        ...existingEnv.vars,
+        ...envVars.filter(v => !existingKeys.has(v.key)),
+      ];
+      await saveEnvironment({ ...existingEnv, vars: merged });
+    } else {
+      const colorIdx = existing.length % ENV_COLORS.length;
+      const newEnv: Environment = {
+        id: crypto.randomUUID(),
+        name: envName,
+        color: ENV_COLORS[colorIdx],
+        vars: envVars,
+      };
+      await saveEnvironment(newEnv);
+    }
+
+    setPendingVars(null);
+    onLoaded();
   };
 
   const onDrop = (e: React.DragEvent) => {
@@ -75,27 +255,33 @@ function SpecLoader({ onLoaded }: { onLoaded: () => void }) {
   };
 
   return (
-    <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden">
-      <div className="px-5 py-4 border-b border-[var(--border)]">
+    <>
+      {pendingVars && (
+        <EnvImportModal
+          specTitle={pendingTitle}
+          vars={pendingVars}
+          onConfirm={handleEnvConfirm}
+          onSkip={() => { setPendingVars(null); onLoaded(); }}
+        />
+      )}
+    <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)]">
+      <div className="border-b border-[var(--border)] px-5 py-4">
         <div className="text-[14px] font-semibold text-[var(--foreground)]">Load Spec</div>
-        <div className="text-[12.5px] text-[var(--muted-foreground)] mt-0.5">
+        <div className="mt-0.5 text-[12.5px] text-[var(--muted-foreground)]">
           Upload a YAML or JSON OpenAPI spec, or load from a URL
         </div>
       </div>
 
       <div className="p-5">
-        <div className="flex bg-[var(--elevated)] rounded-lg p-1 mb-4 gap-0.5">
+        <div className="mb-4 flex gap-0.5 rounded-lg bg-[var(--elevated)] p-1">
           {(['file', 'url'] as const).map(t => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
+            <button key={t} onClick={() => setTab(t)}
               className={cn(
-                'flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[13px] font-medium rounded-md transition-all duration-100 border-0 cursor-pointer font-sans',
+                'flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-[13px] font-medium transition-all duration-100 border-0 cursor-pointer font-sans',
                 tab === t
                   ? 'bg-[var(--background)] text-[var(--foreground)] shadow-sm'
                   : 'bg-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground-secondary)]',
-              )}
-            >
+              )}>
               {t === 'file' ? <FileCode2 size={12} /> : <Link2 size={12} />}
               {t === 'file' ? 'Upload File' : 'From URL'}
             </button>
@@ -104,23 +290,17 @@ function SpecLoader({ onLoaded }: { onLoaded: () => void }) {
 
         {tab === 'file' && (
           <>
-            <input
-              ref={fileRef} type="file" accept=".yaml,.yml,.json"
-              className="hidden"
-              onChange={e => { const f = e.target.files?.[0]; if (f) { setFile(f); doUpload(f); } }}
-            />
+            <input ref={fileRef} type="file" accept=".yaml,.yml,.json" className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) { setFile(f); doUpload(f); } }} />
             <div
               onDragOver={e => { e.preventDefault(); setDrag(true); }}
               onDragLeave={() => setDrag(false)}
               onDrop={onDrop}
               onClick={() => fileRef.current?.click()}
               className={cn(
-                'border-2 border-dashed rounded-lg px-5 py-8 text-center cursor-pointer transition-all duration-150',
-                drag
-                  ? 'border-[var(--accent)] bg-[var(--accent-dim)]'
-                  : 'border-[var(--border)] hover:border-[var(--border-hover)]',
-              )}
-            >
+                'cursor-pointer rounded-xl border-2 border-dashed px-5 py-10 text-center transition-all duration-150',
+                drag ? 'border-[var(--accent)] bg-[var(--accent-dim)]' : 'border-[var(--border)] hover:border-[var(--border-hover)]',
+              )}>
               {state === 'loading' ? (
                 <div className="flex flex-col items-center gap-2">
                   <span className="spinner" style={{ width: 20, height: 20, borderWidth: 2 }} />
@@ -128,7 +308,7 @@ function SpecLoader({ onLoaded }: { onLoaded: () => void }) {
                 </div>
               ) : (
                 <>
-                  <div className="w-9 h-9 rounded-lg bg-[color-mix(in_srgb,var(--foreground)_7%,transparent)] flex items-center justify-center mx-auto mb-3">
+                  <div className="mx-auto mb-3 flex size-10 items-center justify-center rounded-xl bg-[color-mix(in_srgb,var(--foreground)_7%,transparent)]">
                     <Upload size={16} className="text-[var(--muted-foreground)]" />
                   </div>
                   {file && state !== 'error' ? (
@@ -138,7 +318,7 @@ function SpecLoader({ onLoaded }: { onLoaded: () => void }) {
                     </div>
                   ) : (
                     <>
-                      <div className="text-[13.5px] font-medium text-[var(--foreground)] mb-1">Drop your spec file here</div>
+                      <div className="mb-1 text-[13.5px] font-medium text-[var(--foreground)]">Drop your spec file here</div>
                       <div className="text-[12px] text-[var(--muted-foreground)]">or click to browse · .yaml, .yml, .json</div>
                     </>
                   )}
@@ -150,46 +330,38 @@ function SpecLoader({ onLoaded }: { onLoaded: () => void }) {
 
         {tab === 'url' && (
           <div className="flex gap-2">
-            <input
-              className="input flex-1 h-9 font-mono text-[12.5px]"
+            <input className="input flex-1 h-9 font-mono text-[12.5px]"
               placeholder="https://api.example.com/openapi.yaml"
-              value={url}
-              onChange={e => setUrl(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && doLoadUrl()}
-            />
-            <button
-              className="btn btn-primary h-9 flex-shrink-0 gap-1.5"
-              onClick={doLoadUrl}
-              disabled={!url.trim() || state === 'loading'}
-            >
-              {state === 'loading'
-                ? <span className="spinner" style={{ width: 12, height: 12 }} />
-                : <Globe size={13} />}
+              value={url} onChange={e => setUrl(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && doLoadUrl()} />
+            <button className="btn btn-primary h-9 flex-shrink-0 gap-1.5" onClick={doLoadUrl}
+              disabled={!url.trim() || state === 'loading'}>
+              {state === 'loading' ? <span className="spinner" style={{ width: 12, height: 12 }} /> : <Globe size={13} />}
               Load
             </button>
           </div>
         )}
 
         {state === 'success' && result?.spec && (
-          <div className="mt-3 px-3 py-2.5 rounded-lg bg-[var(--accent-dim)] border border-[rgba(34,197,94,0.25)] flex items-center gap-2.5">
-            <CheckCircle size={14} className="text-[var(--accent)] flex-shrink-0" />
-            <div className="flex-1 min-w-0">
+          <div className="mt-3 flex items-center gap-2.5 rounded-lg border border-[rgba(34,197,94,0.25)] bg-[var(--accent-dim)] px-3 py-2.5">
+            <CheckCircle size={14} className="shrink-0 text-[var(--accent)]" />
+            <div className="min-w-0 flex-1">
               <span className="text-[13px] font-medium text-[var(--foreground)]">{result.spec.title}</span>
-              <span className="text-[12px] text-[var(--muted-foreground)] ml-2">
+              <span className="ml-2 text-[12px] text-[var(--muted-foreground)]">
                 v{result.spec.version} · {result.endpointCount} endpoints
               </span>
             </div>
           </div>
         )}
-
         {state === 'error' && result?.error && (
-          <div className="mt-3 px-3 py-2.5 rounded-lg bg-[var(--error-dim)] border border-[rgba(239,68,68,0.25)] flex items-start gap-2.5">
-            <X size={14} className="text-[var(--destructive)] flex-shrink-0 mt-0.5" />
+          <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-[rgba(239,68,68,0.25)] bg-[var(--error-dim)] px-3 py-2.5">
+            <X size={14} className="mt-0.5 shrink-0 text-[var(--destructive)]" />
             <span className="text-[12px] text-[var(--destructive)] break-words">{result.error}</span>
           </div>
         )}
       </div>
     </div>
+    </>
   );
 }
 
@@ -252,198 +424,215 @@ export function OverviewPage() {
   };
 
   return (
-    <div className="flex-1 overflow-auto bg-[var(--background)]">
+    <div className="flex h-full flex-col overflow-hidden bg-[var(--background)]">
 
-      {/* Header */}
-      <div className="flex items-center justify-between px-8 pt-7 pb-5 border-b border-[var(--border)]">
+      {/* ── Header ── */}
+      <header className="flex shrink-0 items-center justify-between border-b border-[var(--border)] px-6 py-3.5">
         <div>
-          <h1 className="text-[18px] font-bold tracking-tight text-[var(--foreground)]">Overview</h1>
-          <p className="text-[12.5px] text-[var(--muted-foreground)] mt-0.5">
+          <h1 className="text-[15px] font-bold tracking-tight text-[var(--foreground)]">Overview</h1>
+          <p className="mt-0.5 text-[11.5px] text-[var(--muted-foreground)]">
             {specLoaded
               ? `${status!.spec.title} · v${status!.spec.version}`
               : 'Load an OpenAPI spec to get started'}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={load} disabled={refreshing} className="btn btn-ghost gap-1.5 text-[13px]">
-            <RefreshCw size={13} className={cn(refreshing && 'animate-spin')} />
+          <button onClick={load} disabled={refreshing}
+            className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-[12.5px] text-[var(--foreground-secondary)] transition-colors hover:border-[var(--border-hover)] hover:text-[var(--foreground)] disabled:opacity-50">
+            <RefreshCw size={12} className={cn(refreshing && 'animate-spin')} />
             Refresh
           </button>
           {specLoaded && (
-            <a
-              href={cliLink('/openapi.json')}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-primary gap-1.5 text-[13px] no-underline"
-            >
-              <Globe size={13} />
+            <a href={cliLink('/openapi.json')} target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-1.5 rounded-lg bg-[var(--foreground)] px-3 py-1.5 text-[12.5px] font-semibold text-[var(--background)] no-underline transition-opacity hover:opacity-85">
+              <Globe size={12} />
               View Spec
               <ArrowUpRight size={11} />
             </a>
           )}
         </div>
-      </div>
+      </header>
 
-      {specLoaded ? (
-        <div className="px-8 py-6 flex flex-col gap-5">
+      {/* ── Scrollable content ── */}
+      <div className="flex-1 overflow-auto px-6 py-5">
+        {specLoaded ? (
+          <div className="flex max-w-[1040px] flex-col gap-4">
 
-          {/* Stats strip */}
-          <div className="grid grid-cols-3 gap-4">
-            <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4">
-              <div className="text-[11px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)] mb-2.5">Endpoints</div>
-              <div className="text-[30px] font-bold tracking-tight leading-none text-[var(--foreground)]">
-                {status!.endpointCount ?? '—'}
-              </div>
-            </div>
-            <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4">
-              <div className="text-[11px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)] mb-2.5">Server</div>
-              <div className="text-[12.5px] font-mono text-[var(--foreground)] truncate leading-snug">
-                {status!.spec.baseUrl || status!.spec.url || '—'}
-              </div>
-            </div>
-            <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4">
-              <div className="text-[11px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)] mb-2.5">Version</div>
-              <div className="text-[13px] font-mono text-[var(--foreground)]">
-                v{status!.spec.version}
-              </div>
-            </div>
-          </div>
+            {/* Stats row */}
+            <div className="grid grid-cols-3 gap-3">
 
-          {/* MCP config + quick actions */}
-          <div className="grid grid-cols-[1fr_240px] gap-4">
-
-            {/* MCP Configuration */}
-            <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden">
-              <div className="px-5 py-3.5 border-b border-[var(--border)] flex items-center justify-between">
-                <div>
-                  <div className="text-[14px] font-semibold text-[var(--foreground)]">MCP Configuration</div>
-                  <div className="text-[12px] text-[var(--muted-foreground)] mt-0.5">Connect your AI client to this server</div>
+              {/* Endpoints */}
+              <div className="flex flex-col rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">Endpoints</span>
+                  <span className="flex size-[22px] shrink-0 items-center justify-center rounded-md bg-[rgba(59,130,246,0.12)] text-[#3b82f6]">
+                    <Zap size={11} />
+                  </span>
                 </div>
-                <a
-                  href={mcpUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 text-[11.5px] text-[var(--muted-foreground)] no-underline hover:text-[var(--foreground)] transition-colors"
-                >
-                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0" />
-                  Live
-                  <ExternalLink size={10} className="opacity-50" />
-                </a>
+                <span className="text-[32px] font-bold leading-none tracking-tight text-[var(--foreground)]">
+                  {status!.endpointCount}
+                </span>
+                <span className="mt-2 text-[11px] text-[var(--muted-foreground)]">API operations defined</span>
               </div>
 
-              <div className="p-5">
-                {/* Client tabs */}
-                <div className="flex bg-[var(--elevated)] rounded-lg p-1 mb-4 gap-0.5">
-                  {MCP_CLIENTS.map(c => (
-                    <button
-                      key={c.id}
-                      onClick={() => setMcpClient(c.id)}
-                      className={cn(
-                        'flex-1 py-1.5 text-[12.5px] font-medium rounded-md transition-all duration-100 border-0 cursor-pointer font-sans',
-                        mcpClient === c.id
-                          ? 'bg-[var(--background)] text-[var(--foreground)] shadow-sm'
-                          : 'bg-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground-secondary)]',
-                      )}
-                    >
-                      {c.label}
-                    </button>
-                  ))}
+              {/* Base URL */}
+              <div className="flex flex-col rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">Base URL</span>
+                  <span className="flex size-[22px] shrink-0 items-center justify-center rounded-md bg-[rgba(34,197,94,0.12)] text-[#22c55e]">
+                    <Globe size={11} />
+                  </span>
                 </div>
+                <span className="line-clamp-2 break-all font-mono text-[12px] leading-snug text-[var(--foreground)]">
+                  {status!.spec.baseUrl || status!.spec.url || '—'}
+                </span>
+                <span className="mt-2 text-[11px] text-[var(--muted-foreground)]">Server base URL</span>
+              </div>
 
-                {/* Snippet */}
-                <div className="relative bg-[var(--elevated)] border border-[var(--border)] rounded-lg overflow-hidden">
-                  <div className="px-3 pt-2 pb-2 text-[10.5px] text-[var(--placeholder-foreground)] border-b border-[var(--border)] font-mono truncate">
-                    {MCP_FILE_LABELS[mcpClient]}
+              {/* Version */}
+              <div className="flex flex-col rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">Version</span>
+                  <span className="flex size-[22px] shrink-0 items-center justify-center rounded-md bg-[rgba(139,92,246,0.12)] text-[#8b5cf6]">
+                    <CheckCircle size={11} />
+                  </span>
+                </div>
+                <span className="inline-flex w-fit items-center rounded-full bg-[rgba(139,92,246,0.12)] px-2.5 py-1 font-mono text-[14px] font-semibold text-[#8b5cf6]">
+                  v{status!.spec.version}
+                </span>
+                <span className="mt-2 text-[11px] text-[var(--muted-foreground)]">OpenAPI specification</span>
+              </div>
+            </div>
+
+            {/* MCP config + quick actions */}
+            <div className="grid grid-cols-[1fr_268px] gap-3">
+
+              {/* MCP Configuration */}
+              <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)]">
+                <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3.5">
+                  <div>
+                    <div className="text-[13.5px] font-semibold text-[var(--foreground)]">MCP Configuration</div>
+                    <div className="mt-0.5 text-[11.5px] text-[var(--muted-foreground)]">Connect your AI client to this server</div>
                   </div>
-                  <pre className="m-0 px-4 pt-3 pb-3 pr-20 text-[11.5px] font-mono text-[var(--muted-foreground)] overflow-auto leading-relaxed whitespace-pre-wrap break-all">
-                    {mcpSnippets[mcpClient]}
-                  </pre>
-                  <button
-                    onClick={() => copy(mcpClient, mcpSnippets[mcpClient])}
-                    className={cn(
-                      'absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded text-[11px] bg-[var(--card)] border border-[var(--border)] cursor-pointer font-sans transition-colors',
-                      copied === mcpClient
-                        ? 'text-[var(--accent)]'
-                        : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
-                    )}
-                  >
-                    {copied === mcpClient ? <Check size={11} /> : <Copy size={11} />}
-                    {copied === mcpClient ? 'Copied' : 'Copy'}
-                  </button>
+                  <a href={mcpUrl} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 rounded-full border border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)] px-2.5 py-1 text-[11px] font-medium text-[#22c55e] no-underline transition-colors hover:bg-[rgba(34,197,94,0.14)]">
+                    <span className="size-1.5 rounded-full bg-[#22c55e]" style={{ boxShadow: '0 0 4px rgba(34,197,94,0.7)' }} />
+                    Live
+                    <ExternalLink size={9} className="opacity-70" />
+                  </a>
                 </div>
 
-                <p className="text-[11.5px] text-[var(--placeholder-foreground)] mt-3 leading-relaxed">
-                  {MCP_HINTS[mcpClient]}
-                </p>
+                <div className="p-5">
+                  {/* Client tabs */}
+                  <div className="mb-4 flex gap-0.5 rounded-lg bg-[var(--elevated)] p-1">
+                    {MCP_CLIENTS.map(c => (
+                      <button key={c.id} onClick={() => setMcpClient(c.id)}
+                        className={cn(
+                          'flex-1 rounded-md py-1.5 text-[12px] font-medium transition-all duration-100 border-0 cursor-pointer font-sans',
+                          mcpClient === c.id
+                            ? 'bg-[var(--background)] text-[var(--foreground)] shadow-sm'
+                            : 'bg-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground-secondary)]',
+                        )}>
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Code block */}
+                  <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--elevated)]">
+                    <div className="flex items-center justify-between border-b border-[var(--border)] px-3.5 py-2">
+                      <span className="truncate font-mono text-[10.5px] text-[var(--muted-foreground)]">
+                        {MCP_FILE_LABELS[mcpClient]}
+                      </span>
+                      <button onClick={() => copy(mcpClient, mcpSnippets[mcpClient])}
+                        className={cn(
+                          'ml-3 flex shrink-0 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 py-1 text-[11px] font-sans transition-colors',
+                          copied === mcpClient ? 'text-[#22c55e]' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
+                        )}>
+                        {copied === mcpClient ? <Check size={10} /> : <Copy size={10} />}
+                        {copied === mcpClient ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                    <pre className="m-0 overflow-auto px-4 py-3.5 font-mono text-[11.5px] leading-relaxed text-[var(--foreground)] whitespace-pre-wrap break-all">
+                      {mcpSnippets[mcpClient]}
+                    </pre>
+                  </div>
+
+                  <p className="mt-3 text-[11.5px] leading-relaxed text-[var(--muted-foreground)]">
+                    {MCP_HINTS[mcpClient]}
+                  </p>
+                </div>
+              </div>
+
+              {/* Right column */}
+              <div className="flex flex-col gap-3">
+
+                {/* Quick Actions */}
+                <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)]">
+                  <div className="border-b border-[var(--border)] px-4 py-3">
+                    <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">Quick Actions</span>
+                  </div>
+                  <div className="flex flex-col gap-1.5 p-3">
+                    <Link to="/explorer"
+                      className="flex items-center justify-between rounded-lg bg-[var(--foreground)] px-3.5 py-2.5 text-[12.5px] font-semibold text-[var(--background)] no-underline transition-opacity hover:opacity-85">
+                      Open Explorer <ArrowUpRight size={12} />
+                    </Link>
+                    <Link to="/ai"
+                      className="flex items-center justify-between rounded-lg border border-[var(--border)] px-3.5 py-2.5 text-[12.5px] text-[var(--foreground-secondary)] no-underline transition-colors hover:border-[var(--border-hover)] hover:bg-[var(--elevated)] hover:text-[var(--foreground)]">
+                      AI Chat <Bot size={12} />
+                    </Link>
+                    <Link to="/logs"
+                      className="flex items-center justify-between rounded-lg border border-[var(--border)] px-3.5 py-2.5 text-[12.5px] text-[var(--foreground-secondary)] no-underline transition-colors hover:border-[var(--border-hover)] hover:bg-[var(--elevated)] hover:text-[var(--foreground)]">
+                      View Logs <Activity size={12} />
+                    </Link>
+                    <a href={cliLink('/openapi.json')} target="_blank" rel="noopener noreferrer"
+                      className="flex items-center justify-between rounded-lg border border-[var(--border)] px-3.5 py-2.5 text-[12.5px] text-[var(--foreground-secondary)] no-underline transition-colors hover:border-[var(--border-hover)] hover:bg-[var(--elevated)] hover:text-[var(--foreground)]">
+                      Raw Spec <ExternalLink size={12} />
+                    </a>
+                  </div>
+                </div>
+
+                {/* MCP endpoint info */}
+                <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4">
+                  <div className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">MCP Endpoint</div>
+                  <div className="flex items-center gap-2">
+                    <span className="size-1.5 shrink-0 rounded-full bg-[#22c55e]" style={{ boxShadow: '0 0 5px rgba(34,197,94,0.7)' }} />
+                    <span className="text-[12.5px] font-medium text-[var(--foreground)]">Live</span>
+                    <a href={mcpUrl} target="_blank" rel="noopener noreferrer"
+                      className="ml-auto text-[var(--muted-foreground)] no-underline transition-colors hover:text-[var(--foreground)]">
+                      <ExternalLink size={11} />
+                    </a>
+                  </div>
+                  <div className="mt-2.5 overflow-hidden rounded-lg bg-[var(--elevated)] px-2.5 py-2">
+                    <span className="break-all font-mono text-[10.5px] text-[var(--muted-foreground)]">{mcpUrl}</span>
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* Quick actions */}
-            <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 flex flex-col gap-4">
-              <div className="text-[11px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">
-                Quick Actions
-              </div>
-              <div className="flex flex-col gap-2">
-                <Link
-                  to="/explorer"
-                  className="flex items-center justify-between px-3 py-2.5 rounded-lg text-[13px] font-medium bg-[var(--primary)] text-[var(--primary-foreground)] no-underline hover:opacity-90 transition-opacity"
-                >
-                  Open Explorer
-                  <ArrowUpRight size={13} />
-                </Link>
-                <Link
-                  to="/ai"
-                  className="flex items-center justify-between px-3 py-2.5 rounded-lg text-[13px] font-medium border border-[var(--border)] text-[var(--muted-foreground)] no-underline hover:border-[var(--border-hover)] hover:text-[var(--foreground)] transition-colors"
-                >
-                  AI Chat
-                  <Bot size={13} />
-                </Link>
-                <Link
-                  to="/logs"
-                  className="flex items-center justify-between px-3 py-2.5 rounded-lg text-[13px] font-medium border border-[var(--border)] text-[var(--muted-foreground)] no-underline hover:border-[var(--border-hover)] hover:text-[var(--foreground)] transition-colors"
-                >
-                  View Logs
-                  <Activity size={13} />
-                </Link>
-                <a
-                  href={cliLink('/openapi.json')}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-between px-3 py-2.5 rounded-lg text-[13px] font-medium border border-[var(--border)] text-[var(--muted-foreground)] no-underline hover:border-[var(--border-hover)] hover:text-[var(--foreground)] transition-colors"
-                >
-                  Raw Spec
-                  <ExternalLink size={12} />
-                </a>
-              </div>
+          </div>
+        ) : (
+          /* ── No spec loaded ── */
+          <div className="grid max-w-[820px] grid-cols-[1fr_260px] gap-4">
+            <SpecLoader onLoaded={load} />
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+              <div className="mb-4 text-[10px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">Getting started</div>
+              {[
+                { icon: <FileCode2 size={13} />, text: 'Upload an OpenAPI 3.x YAML or JSON file' },
+                { icon: <Link2 size={13} />, text: 'Or paste a spec URL (Swagger Hub, GitHub, etc.)' },
+                { icon: <Zap size={13} />, text: 'Explore endpoints, test requests, chat with AI' },
+              ].map((item, i) => (
+                <div key={i} className="mb-3 flex items-start gap-3">
+                  <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[color-mix(in_srgb,var(--foreground)_7%,transparent)] text-[var(--muted-foreground)]">
+                    {item.icon}
+                  </span>
+                  <span className="pt-1 text-[12.5px] leading-relaxed text-[var(--muted-foreground)]">{item.text}</span>
+                </div>
+              ))}
             </div>
           </div>
-
-        </div>
-      ) : (
-        /* No spec loaded */
-        <div className="px-8 py-6 grid grid-cols-[1fr_280px] gap-5">
-          <SpecLoader onLoaded={load} />
-          <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5">
-            <div className="text-[11px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)] mb-4">
-              Getting started
-            </div>
-            {[
-              { icon: <FileCode2 size={13} />, text: 'Upload an OpenAPI 3.x YAML or JSON file' },
-              { icon: <Link2 size={13} />, text: 'Or paste a spec URL (Swagger Hub, GitHub, etc.)' },
-              { icon: <Zap size={13} />, text: 'Explore endpoints, test requests, chat with AI' },
-            ].map((item, i) => (
-              <div key={i} className="flex items-start gap-3 mb-3">
-                <span className="w-7 h-7 rounded-lg flex-shrink-0 bg-[color-mix(in_srgb,var(--foreground)_7%,transparent)] flex items-center justify-center text-[var(--muted-foreground)]">
-                  {item.icon}
-                </span>
-                <span className="text-[12.5px] text-[var(--muted-foreground)] leading-relaxed pt-1">
-                  {item.text}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

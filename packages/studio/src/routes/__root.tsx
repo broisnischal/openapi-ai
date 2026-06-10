@@ -63,143 +63,107 @@ function OfflineCard() {
 
   return (
     <div className="offline-overlay">
-      <div style={{ width: '100%', maxWidth: 860, padding: '0 24px' }}>
+      <div className="w-full max-w-[800px] px-6">
+
         {/* Header */}
-        <div style={{ marginBottom: 52 }}>
-          <h1 style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-0.04em', color: 'var(--foreground)', lineHeight: 1.25, margin: 0 }}>
-            Hey 👋
-            <br />
-            Welcome to Wasper Studio
+        <div className="mb-10">
+          <h1 className="text-[26px] font-bold leading-snug tracking-tight text-[var(--foreground)]">
+            Hey 👋<br />Welcome to Wasper Studio
           </h1>
-          <div style={{ marginTop: 12, fontSize: 14, color: 'var(--muted-foreground)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div className="mt-3 flex items-center gap-2.5 text-[13.5px] text-[var(--muted-foreground)]">
             Connecting to the CLI on{' '}
-            <code style={{ fontFamily: 'GeistMono, monospace', fontSize: 12.5 }}>{currentUrl}</code>
-            <span className="connecting-dots">
-              <span /><span /><span />
-            </span>
+            <code className="rounded-md border border-[var(--border)] bg-[var(--elevated)] px-2 py-0.5 font-mono text-[12px] text-[var(--foreground)]">
+              {currentUrl}
+            </code>
+            <span className="connecting-dots"><span /><span /><span /></span>
           </div>
         </div>
 
-        {/* Two-column content */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 96px' }}>
+        {/* Two-column */}
+        <div className="grid grid-cols-2 gap-16">
+
           {/* Left: CLI instructions */}
           <div>
-            <div style={{
-              width: 46, height: 46, borderRadius: 12,
-              background: 'linear-gradient(135deg, #166534 0%, #15803d 100%)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              marginBottom: 18, boxShadow: '0 2px 8px rgba(22,101,52,0.4)',
-            }}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="4 17 10 11 4 5" />
-                <line x1="12" y1="19" x2="20" y2="19" />
+            <div className="mb-4 flex size-11 items-center justify-center rounded-xl"
+              style={{ background: 'linear-gradient(135deg, #166534 0%, #15803d 100%)', boxShadow: '0 2px 8px rgba(22,101,52,0.4)' }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
               </svg>
             </div>
-            <div style={{ fontSize: 15.5, fontWeight: 700, color: 'var(--foreground)', marginBottom: 12, letterSpacing: '-0.02em' }}>
-              wasper-cli
-            </div>
-            <div style={{ fontSize: 13.5, color: 'var(--muted-foreground)', marginBottom: 18, lineHeight: 1.6 }}>
+            <h2 className="mb-2 text-[15px] font-bold tracking-tight text-[var(--foreground)]">wasper-cli</h2>
+            <p className="mb-4 text-[13.5px] leading-relaxed text-[var(--muted-foreground)]">
               Make sure the CLI is up and running
+            </p>
+            <div className="flex flex-col gap-2 text-[13px] text-[var(--muted-foreground)]">
+              <span>1. Install the CLI globally:</span>
+              <code className="inline-block rounded-lg border border-[var(--border)] bg-[var(--elevated)] px-3 py-2 font-mono text-[12.5px] text-[var(--foreground)]">
+                npm i -g wasper-cli
+              </code>
+              <span className="mt-1">2. Start the CLI with your spec:</span>
+              <code className="inline-block rounded-lg border border-[var(--border)] bg-[var(--elevated)] px-3 py-2 font-mono text-[12.5px] text-[var(--foreground)]">
+                wasper --url &lt;spec-url&gt;
+              </code>
             </div>
-            <div style={{ fontSize: 13.5, color: 'var(--muted-foreground)', display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div>1. Install the CLI globally:</div>
-              <code style={{
-                fontSize: 12.5, fontFamily: 'GeistMono, monospace',
-                background: 'var(--elevated)', border: '1px solid var(--border)',
-                borderRadius: 6, padding: '6px 11px', display: 'inline-block', color: 'var(--foreground)',
-              }}>npm i -g wasper-cli</code>
-              <div style={{ marginTop: 2 }}>2. Start the CLI with your spec:</div>
-              <code style={{
-                fontSize: 12.5, fontFamily: 'GeistMono, monospace',
-                background: 'var(--elevated)', border: '1px solid var(--border)',
-                borderRadius: 6, padding: '6px 11px', display: 'inline-block', color: 'var(--foreground)',
-              }}>wasper --url &lt;spec-url&gt;</code>
-            </div>
-            <div style={{ marginTop: 22, fontSize: 13.5, color: 'var(--muted-foreground)', lineHeight: 1.7 }}>
-              Still experiencing issues?<br />
+            <p className="mt-5 text-[13.5px] leading-relaxed text-[var(--muted-foreground)]">
+              Still experiencing issues?{' '}
               <button
                 onClick={() => window.open('https://github.com/broisnischal/wasper/issues', '_blank')}
-                style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--primary)', fontSize: 13.5, fontFamily: 'inherit', textDecoration: 'underline', textUnderlineOffset: 2 }}
+                className="border-0 bg-transparent p-0 font-sans text-[13.5px] cursor-pointer text-[var(--primary)] underline underline-offset-2"
               >
                 Open an issue on GitHub
               </button>
-            </div>
+            </p>
           </div>
 
-          {/* Right: Custom URL / remote CLI */}
+          {/* Right: Custom URL */}
           <div>
-            <div style={{
-              width: 46, height: 46, borderRadius: 12,
-              background: 'linear-gradient(135deg, #1e3a5f 0%, #1d4ed8 100%)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              marginBottom: 18, boxShadow: '0 2px 8px rgba(29,78,216,0.35)',
-            }}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="2" y1="12" x2="22" y2="12" />
+            <div className="mb-4 flex size-11 items-center justify-center rounded-xl"
+              style={{ background: 'linear-gradient(135deg, #1e3a5f 0%, #1d4ed8 100%)', boxShadow: '0 2px 8px rgba(29,78,216,0.35)' }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" />
                 <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
               </svg>
             </div>
-            <div style={{ fontSize: 15.5, fontWeight: 700, color: 'var(--foreground)', marginBottom: 12, letterSpacing: '-0.02em' }}>
-              Using a remote or custom URL?
-            </div>
-            <div style={{ fontSize: 13.5, color: 'var(--muted-foreground)', marginBottom: 18, lineHeight: 1.6 }}>
+            <h2 className="mb-2 text-[15px] font-bold tracking-tight text-[var(--foreground)]">Using a remote or custom URL?</h2>
+            <p className="mb-4 text-[13.5px] leading-relaxed text-[var(--muted-foreground)]">
               By default the studio connects to{' '}
-              <code style={{ fontFamily: 'GeistMono, monospace', fontSize: 12, background: 'var(--elevated)', padding: '1px 6px', borderRadius: 4 }}>localhost:3388</code>.
+              <code className="rounded bg-[var(--elevated)] px-1.5 py-0.5 font-mono text-[12px]">localhost:3388</code>.
               If your CLI is running elsewhere, update the URL below.
-            </div>
+            </p>
             {!showUrlEdit ? (
-              <button
-                onClick={() => setShowUrlEdit(true)}
-                style={{
-                  fontSize: 13.5, color: 'var(--primary)', background: 'none', border: 'none',
-                  cursor: 'pointer', padding: 0, fontFamily: 'inherit',
-                  textDecoration: 'underline', textUnderlineOffset: 2,
-                }}
-              >
+              <button onClick={() => setShowUrlEdit(true)}
+                className="border-0 bg-transparent p-0 font-sans text-[13.5px] cursor-pointer text-[var(--primary)] underline underline-offset-2">
                 Change CLI URL
               </button>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <input
-                  className="input"
-                  value={urlInput}
+              <div className="flex flex-col gap-2">
+                <input className="input font-mono text-[12.5px]" value={urlInput}
                   onChange={e => setUrlInput(e.target.value)}
                   placeholder="http://localhost:3388"
-                  onKeyDown={e => e.key === 'Enter' && save()}
-                  style={{ fontFamily: 'GeistMono, monospace', fontSize: 12.5 }}
-                />
-                <input
-                  className="input"
-                  type="password"
-                  value={tokenInput}
+                  onKeyDown={e => e.key === 'Enter' && save()} />
+                <input className="input font-mono text-[12.5px]" type="password" value={tokenInput}
                   onChange={e => setTokenInput(e.target.value)}
                   placeholder="Access token (optional — for --token servers)"
-                  onKeyDown={e => e.key === 'Enter' && save()}
-                  style={{ fontFamily: 'GeistMono, monospace', fontSize: 12.5 }}
-                />
+                  onKeyDown={e => e.key === 'Enter' && save()} />
                 {isUnsafeMix && (
-                  <div style={{ fontSize: 12, color: 'var(--warning)', lineHeight: 1.5 }}>
+                  <div className="text-[12px] leading-relaxed text-[var(--warning)]">
                     ⚠ Browsers block HTTP→non-localhost from HTTPS pages. Use <strong>https://</strong> or <strong>localhost</strong>.
                   </div>
                 )}
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Connect</button>
+                <div className="flex gap-2">
+                  <button className="btn btn-primary flex-1" onClick={save}>Connect</button>
                   {currentUrl !== 'http://localhost:3388' && (
                     <button className="btn btn-ghost" onClick={reset}>Reset</button>
                   )}
                 </div>
               </div>
             )}
-            <div style={{ marginTop: 24, fontSize: 13.5, color: 'var(--muted-foreground)', display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div>1. Start the CLI with a custom port:</div>
-              <code style={{
-                fontSize: 12.5, fontFamily: 'GeistMono, monospace',
-                background: 'var(--elevated)', border: '1px solid var(--border)',
-                borderRadius: 6, padding: '6px 11px', display: 'inline-block',
-                color: 'var(--foreground)',
-              }}>wasper --port 4000</code>
-              <div>2. Enter the URL above and click Connect</div>
+            <div className="mt-5 flex flex-col gap-2 text-[13px] text-[var(--muted-foreground)]">
+              <span>1. Start the CLI with a custom port:</span>
+              <code className="inline-block rounded-lg border border-[var(--border)] bg-[var(--elevated)] px-3 py-2 font-mono text-[12.5px] text-[var(--foreground)]">
+                wasper --port 4000
+              </code>
+              <span>2. Enter the URL above and click Connect</span>
             </div>
           </div>
         </div>
@@ -351,20 +315,19 @@ function AppShell() {
   // Loading state: null = still checking
   if (connected === null) {
     return (
-      <div style={{
-        height: '100vh', display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center',
-        background: 'var(--background)', animation: 'fade-in 0.2s ease',
-      }}>
-        <div style={{ maxWidth: 860, width: '100%', padding: '0 24px' }}>
-          <h1 style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-0.04em', color: 'var(--foreground)', lineHeight: 1.25, margin: 0 }}>
-            Hey 👋
-            <br />
-            Welcome to Wasper Studio
-          </h1>
-          <div style={{ marginTop: 12, fontSize: 14, color: 'var(--muted-foreground)', display: 'flex', alignItems: 'center', gap: 10 }}>
-            Connecting to the CLI…
-            <span className="connecting-dots"><span /><span /><span /></span>
+      <div className="flex h-screen flex-col items-center justify-center bg-[var(--background)]" style={{ animation: 'fade-in 0.2s ease' }}>
+        <div className="flex flex-col items-center gap-5 text-center">
+          <div className="flex size-12 items-center justify-center rounded-2xl bg-[var(--foreground)]">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--background)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
+            </svg>
+          </div>
+          <div>
+            <div className="text-[18px] font-bold tracking-tight text-[var(--foreground)]">Wasper Studio</div>
+            <div className="mt-2.5 flex items-center justify-center gap-2 text-[13px] text-[var(--muted-foreground)]">
+              Connecting to CLI
+              <span className="connecting-dots"><span /><span /><span /></span>
+            </div>
           </div>
         </div>
       </div>

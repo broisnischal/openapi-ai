@@ -7,18 +7,18 @@ import { cn } from '../lib/utils';
 import {
   LayoutGrid, Terminal, Activity, Key, Settings, Bot,
   Sun, Moon, Search, ArrowRightLeft,
-  ChevronLeft, ChevronRight, ChevronDown, Layers, Keyboard, BugPlay,
+  ChevronLeft, ChevronRight, ChevronDown, Layers, Keyboard, Workflow,
 } from 'lucide-react';
 
 interface Status { spec: { title: string; version: string }; endpointCount: number; }
 
 const MAIN_NAV = [
-  { to: '/',          icon: LayoutGrid,     label: 'Overview',       exact: true  },
-  { to: '/explorer',  icon: Terminal,       label: 'Explorer',       exact: false },
-  { to: '/ai',        icon: Bot,            label: 'AI Chat',        exact: false },
-  { to: '/console',   icon: BugPlay,        label: 'Console',        exact: false },
-  { to: '/intercept', icon: ArrowRightLeft, label: 'Intercept',      exact: false },
-  { to: '/logs',      icon: Activity,       label: 'Logs',           exact: false },
+  { to: '/',           icon: LayoutGrid,     label: 'Overview',       exact: true  },
+  { to: '/explorer',   icon: Terminal,       label: 'Explorer',       exact: false },
+  { to: '/ai',         icon: Bot,            label: 'AI Chat',        exact: false },
+  { to: '/workflows',  icon: Workflow,       label: 'Workflows',      exact: false },
+  { to: '/intercept',  icon: ArrowRightLeft, label: 'Intercept',      exact: false },
+  { to: '/logs',       icon: Activity,       label: 'Logs',           exact: false },
 ] as const;
 
 const CONFIG_NAV = [
@@ -43,8 +43,8 @@ function NavItem({ to, icon: Icon, label, exact, collapsed }: {
         className={cn(
           'relative flex items-center justify-center w-9 h-9 mx-auto rounded-lg transition-colors duration-100 no-underline',
           active
-            ? 'text-[var(--foreground)] bg-[color-mix(in_srgb,var(--foreground)_9%,transparent)]'
-            : 'text-[var(--muted-foreground)] hover:text-[var(--foreground-secondary)] hover:bg-[color-mix(in_srgb,var(--foreground)_6%,transparent)]',
+            ? 'text-[var(--accent)] bg-[var(--accent-dim)]'
+            : 'text-[var(--muted-foreground)] hover:text-[var(--foreground-secondary)] hover:bg-[color-mix(in_srgb,var(--foreground)_5%,transparent)]',
         )}
       >
         {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 h-4 w-[2.5px] rounded-full bg-[var(--accent)]" />}
@@ -59,8 +59,8 @@ function NavItem({ to, icon: Icon, label, exact, collapsed }: {
       className={cn(
         'relative flex items-center gap-2.5 pl-3 pr-2.5 h-8 rounded-lg w-full text-[13.5px] tracking-tight transition-colors duration-100 no-underline',
         active
-          ? 'text-[var(--foreground)] font-medium bg-[color-mix(in_srgb,var(--foreground)_9%,transparent)]'
-          : 'text-[var(--muted-foreground)] hover:text-[var(--foreground-secondary)] hover:bg-[color-mix(in_srgb,var(--foreground)_6%,transparent)]',
+          ? 'text-[var(--accent)] font-medium bg-[var(--accent-dim)]'
+          : 'text-[var(--muted-foreground)] hover:text-[var(--foreground-secondary)] hover:bg-[color-mix(in_srgb,var(--foreground)_5%,transparent)]',
       )}
     >
       {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 h-4 w-[2.5px] rounded-full bg-[var(--accent)]" />}

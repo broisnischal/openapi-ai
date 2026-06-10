@@ -2,8 +2,10 @@ import { dbQueries, randomUUID, type InterceptRuleRow } from '../db/index';
 import { applyAuth, type AuthConfig } from '../auth/engine';
 import { logBus } from '../logs/bus';
 import { getState, hasState, loadSpec, loadSpecFromText } from '../state';
+import { extractSuggestedVars } from '../openapi/parser';
 import { getFeatures, setFeatures, readonlyViolation, type Features } from '../config';
 import { VERSION } from '../version';
+import { runWorkflow, type WorkflowStep } from '../workflows/engine';
 import dns from 'node:dns/promises';
 
 const CORS = {
@@ -59,6 +61,13 @@ export async function apiRouter(req: Request): Promise<Response> {
   if (path === '/api/saved' && method === 'POST') return handleCreateSaved(req);
   if (path.startsWith('/api/saved/') && method === 'PUT') return handleUpdateSaved(req, path);
   if (path.startsWith('/api/saved/') && method === 'DELETE') return handleDeleteSaved(path);
+
+  if (path === '/api/workflows' && method === 'GET') return handleGetWorkflows();
+  if (path === '/api/workflows' && method === 'POST') return handleCreateWorkflow(req);
+  if (path === '/api/workflows/generate' && method === 'POST') return handleGenerateWorkflow(req);
+  if (path.startsWith('/api/workflows/') && path.endsWith('/run') && method === 'POST') return handleRunWorkflow(path);
+  if (path.startsWith('/api/workflows/') && method === 'PUT') return handleUpdateWorkflow(req, path);
+  if (path.startsWith('/api/workflows/') && method === 'DELETE') return handleDeleteWorkflow(path);
 
   return notFound('API route not found');
 }
@@ -150,10 +159,12 @@ async function handleSpecUpload(req: Request): Promise<Response> {
 
   try {
     const state = loadSpecFromText(content, filename);
+    const suggestedVars = extractSuggestedVars(content, state.spec.baseUrl);
     return json({
       ok: true,
       spec: { title: state.spec.title, version: state.spec.version, baseUrl: state.spec.baseUrl },
       endpointCount: state.operations.length,
+      suggestedVars,
     });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : String(e) }, 400);
@@ -167,10 +178,12 @@ async function handleSpecReloadUrl(req: Request): Promise<Response> {
 
   try {
     const state = await loadSpec(body.url);
+    const suggestedVars = extractSuggestedVars(state.spec.raw, state.spec.baseUrl);
     return json({
       ok: true,
       spec: { title: state.spec.title, version: state.spec.version, baseUrl: state.spec.baseUrl },
       endpointCount: state.operations.length,
+      suggestedVars,
     });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : String(e) }, 400);
@@ -1331,4 +1344,170 @@ function handleDeleteSaved(path: string): Response {
   if (!dbQueries.getSavedRequest(id)) return notFound();
   dbQueries.deleteSavedRequest(id);
   return json({ ok: true });
+}
+
+// ── Workflows ──────────────────────────────────────────────────────────────────
+
+function workflowRow(row: ReturnType<typeof dbQueries.getWorkflow>) {
+  if (!row) return null;
+  let steps: WorkflowStep[] = [];
+  try { steps = JSON.parse(row.steps) as WorkflowStep[]; } catch { /* malformed steps, default to [] */ }
+  return { ...row, steps };
+}
+
+function handleGetWorkflows(): Response {
+  const rows = dbQueries.getWorkflows().map(r => workflowRow(r)).filter(Boolean);
+  return json(rows);
+}
+
+async function handleCreateWorkflow(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try { body = (await req.json()) as Record<string, unknown>; } catch { return badRequest('Invalid JSON'); }
+  const id = randomUUID();
+  dbQueries.insertWorkflow({
+    id,
+    name: String(body.name ?? 'Untitled Workflow'),
+    description: String(body.description ?? ''),
+    steps: typeof body.steps === 'string' ? body.steps : JSON.stringify(body.steps ?? []),
+  });
+  return json(workflowRow(dbQueries.getWorkflow(id)), 201);
+}
+
+async function handleUpdateWorkflow(req: Request, path: string): Promise<Response> {
+  const id = path.slice('/api/workflows/'.length);
+  if (!dbQueries.getWorkflow(id)) return notFound();
+  let body: Record<string, unknown>;
+  try { body = (await req.json()) as Record<string, unknown>; } catch { return badRequest('Invalid JSON'); }
+  const patch: Partial<{ name: string; description: string; steps: string }> = {};
+  if ('name' in body) patch.name = String(body.name);
+  if ('description' in body) patch.description = String(body.description);
+  if ('steps' in body) patch.steps = typeof body.steps === 'string' ? body.steps : JSON.stringify(body.steps);
+  if (Object.keys(patch).length) dbQueries.updateWorkflow(id, patch);
+  return json(workflowRow(dbQueries.getWorkflow(id)));
+}
+
+function handleDeleteWorkflow(path: string): Response {
+  const id = path.slice('/api/workflows/'.length);
+  if (!dbQueries.getWorkflow(id)) return notFound();
+  dbQueries.deleteWorkflow(id);
+  return json({ ok: true });
+}
+
+async function handleGenerateWorkflow(req: Request): Promise<Response> {
+  if (!hasState()) return badRequest('No spec loaded');
+  let body: { prompt?: string };
+  try { body = (await req.json()) as typeof body; } catch { return badRequest('Invalid JSON'); }
+
+  const settingsRow = dbQueries.getSettings();
+  const settings = settingsRow ? JSON.parse(settingsRow.value) as Record<string, unknown> : {};
+  const ai = (settings.ai ?? {}) as { provider?: string; apiKey?: string; model?: string; baseUrl?: string };
+  const provider = ai.provider ?? 'anthropic';
+  if (provider !== 'ollama' && !ai.apiKey) {
+    return json({ error: 'No AI API key configured. Go to Settings → AI Provider to add one.' }, 400);
+  }
+
+  const { spec, operations } = getState();
+  const endpointList = operations.slice(0, 80).map(op =>
+    `${op.method.toUpperCase()} ${op.path}${op.operationId ? ` [${op.operationId}]` : ''}${op.summary ? ` — ${op.summary}` : ''}`
+  ).join('\n');
+
+  const userPrompt = body.prompt?.trim() || 'Generate a realistic end-to-end test workflow covering authentication and CRUD operations.';
+
+  const systemMsg = `You generate API test workflows as JSON for the "${spec.title}" API (base: ${spec.baseUrl}).
+
+Available endpoints:
+${endpointList}
+
+Return ONLY valid JSON (no markdown fences) matching this schema exactly:
+{
+  "name": "string",
+  "description": "string",
+  "steps": [
+    {
+      "id": "step_1",
+      "label": "Human-readable name",
+      "method": "GET|POST|PUT|PATCH|DELETE",
+      "path": "/exact/path/from/spec",
+      "operationId": "operationId or null",
+      "pathParams": {},
+      "queryParams": {},
+      "headers": {},
+      "body": null,
+      "extract": [{"var": "varName", "path": "$.field.nested"}],
+      "assert": [{"type": "status", "statusCode": 200}]
+    }
+  ]
+}
+
+Rules:
+- Use {{varName}} in path/headers/body values to reference vars extracted in prior steps
+- For auth: extract token after login, set headers: {"Authorization": "Bearer {{token}}"}
+- Keep 3–8 steps covering a realistic user journey
+- Only use paths that exist in the endpoint list above`;
+
+  try {
+    let text = '';
+    if (provider === 'anthropic') {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': ai.apiKey!, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: ai.model || 'claude-haiku-4-5-20251001', max_tokens: 2048, system: systemMsg, messages: [{ role: 'user', content: userPrompt }] }),
+      });
+      if (!res.ok) throw new Error(`Anthropic: ${await res.text()}`);
+      const d = await res.json() as { content: Array<{ type: string; text: string }> };
+      text = d.content.find(b => b.type === 'text')?.text ?? '';
+    } else {
+      const base = (ai.baseUrl || (provider === 'openai' ? 'https://api.openai.com' : provider === 'groq' ? 'https://api.groq.com/openai' : provider === 'mistral' ? 'https://api.mistral.ai' : 'https://api.openai.com')).replace(/\/$/, '');
+      const hdrs: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (ai.apiKey) hdrs['Authorization'] = `Bearer ${ai.apiKey}`;
+      const res = await fetch(`${base}/v1/chat/completions`, {
+        method: 'POST', headers: hdrs,
+        body: JSON.stringify({ model: ai.model || 'gpt-4o-mini', max_tokens: 2048, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: systemMsg }, { role: 'user', content: userPrompt }] }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const d = await res.json() as { choices: Array<{ message: { content: string } }> };
+      text = d.choices[0]?.message.content ?? '';
+    }
+
+    let parsed: unknown;
+    try { parsed = JSON.parse(text); }
+    catch {
+      const m = text.match(/```(?:json)?\s*\n?([\s\S]+?)\n?```/);
+      if (m) parsed = JSON.parse(m[1]!);
+      else throw new Error('AI response was not valid JSON');
+    }
+    return json(parsed);
+  } catch (e) {
+    return json({ error: e instanceof Error ? e.message : String(e) }, 500);
+  }
+}
+
+function handleRunWorkflow(path: string): Response {
+  const id = path.slice('/api/workflows/'.length, -'/run'.length);
+  const row = dbQueries.getWorkflow(id);
+  if (!row) return notFound();
+  if (!hasState()) return badRequest('No spec loaded');
+
+  let steps: WorkflowStep[];
+  try { steps = JSON.parse(row.steps) as WorkflowStep[]; }
+  catch { return badRequest('Invalid workflow steps JSON'); }
+
+  if (!steps.length) return badRequest('Workflow has no steps');
+
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+  const enc = new TextEncoder();
+  const emit = (e: Record<string, unknown>) => {
+    writer.write(enc.encode(`data: ${JSON.stringify(e)}\n\n`)).catch(() => {});
+  };
+
+  (async () => {
+    try { await runWorkflow(steps, emit); }
+    catch (e) { emit({ type: 'error', message: e instanceof Error ? e.message : String(e) }); }
+    finally { try { await writer.close(); } catch { /* closed */ } }
+  })();
+
+  return new Response(readable, {
+    headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', ...CORS },
+  });
 }

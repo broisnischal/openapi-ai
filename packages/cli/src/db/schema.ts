@@ -85,4 +85,14 @@ export const SCHEMA = `
     created_at INTEGER NOT NULL DEFAULT (unixepoch())
   );
   CREATE INDEX IF NOT EXISTS idx_spec_history_last_used ON spec_history(last_used DESC);
+
+  CREATE TABLE IF NOT EXISTS workflows (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT 'Untitled Workflow',
+    description TEXT NOT NULL DEFAULT '',
+    steps TEXT NOT NULL DEFAULT '[]',
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+  CREATE INDEX IF NOT EXISTS idx_workflows_updated ON workflows(updated_at DESC);
 `;

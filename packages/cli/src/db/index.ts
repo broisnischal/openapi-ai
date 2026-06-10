@@ -90,6 +90,15 @@ export interface SavedRequestRow {
   updated_at: number;
 }
 
+export interface WorkflowRow {
+  id: string;
+  name: string;
+  description: string;
+  steps: string; // JSON WorkflowStep[]
+  created_at: number;
+  updated_at: number;
+}
+
 export interface SpecHistoryRow {
   id: string;
   url: string;
@@ -266,6 +275,27 @@ export const dbQueries = {
   deleteSpec: (id: string): void => {
     db.query('DELETE FROM spec_history WHERE id = ?').run(id);
   },
+
+  // ── Workflows ──────────────────────────────────────────────────────────────
+  getWorkflows: (): WorkflowRow[] =>
+    db.query('SELECT * FROM workflows ORDER BY updated_at DESC').all() as WorkflowRow[],
+
+  getWorkflow: (id: string): WorkflowRow | null =>
+    db.query('SELECT * FROM workflows WHERE id = ?').get(id) as WorkflowRow | null,
+
+  insertWorkflow: (w: Omit<WorkflowRow, 'created_at' | 'updated_at'>) =>
+    db.query('INSERT INTO workflows (id, name, description, steps) VALUES ($id, $name, $description, $steps)')
+      .run({ $id: w.id, $name: w.name, $description: w.description, $steps: w.steps }),
+
+  updateWorkflow: (id: string, patch: Partial<Pick<WorkflowRow, 'name' | 'description' | 'steps'>>) => {
+    const cols = Object.keys(patch).map(k => `${k} = $${k}`).join(', ');
+    const params: Record<string, string> = { $id: id };
+    for (const [k, v] of Object.entries(patch)) params[`$${k}`] = v as string;
+    db.query(`UPDATE workflows SET ${cols}, updated_at = unixepoch() WHERE id = $id`).run(params);
+  },
+
+  deleteWorkflow: (id: string) =>
+    db.query('DELETE FROM workflows WHERE id = ?').run(id),
 
   // ── Generic key-value settings ──────────────────────────────────────────────
   getSetting: (key: string): string | null =>

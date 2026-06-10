@@ -20,10 +20,11 @@ import { dbGet, dbPut, dbGetAll, dbDel } from '../lib/storage';
 import {
   Search, Plus, X, Send, Copy, Check, ChevronRight, ChevronDown,
   RotateCcw, Download, Bot, Folder, FolderOpen, Cookie, Eye, Lock,
-  Code2, FileUp, Braces, AlignLeft, HelpCircle, FileJson, Settings2, Layers, Trash2,
+  Code2, FileUp, Braces, AlignLeft, HelpCircle, FileJson, Layers, Trash2,
   Bookmark, BookmarkPlus, Share2, Route as RouteIcon,
   FlaskConical, SlidersHorizontal, ShieldAlert, Terminal, Globe, Info,
-  CheckCircle2, XCircle, Clock, RefreshCcw,
+  CheckCircle2, XCircle, Clock, RefreshCcw, MoreHorizontal,
+  Rows2, Columns2,
 } from 'lucide-react';
 
 export const Route = createFileRoute('/explorer')({ component: ExplorerPage });
@@ -1269,8 +1270,8 @@ function ResponsePanel({ response, loading }: { response: ResponseResult | null;
           )}
         </div>
 
-        {/* Tabs — flush, no extra padding */}
-        <div className="flex items-stretch flex-1 overflow-x-auto min-w-0">
+        {/* Tabs */}
+        <div className="flex items-center gap-[2px] flex-1 overflow-x-auto min-w-0 px-1.5">
           {tabs.map(t => (
             <button key={t.id} className={cn('sub-tab', view === t.id && 'active')} onClick={() => setView(t.id)}>
               {t.label}
@@ -1855,6 +1856,7 @@ function ExplorerPage() {
   const [reqTab, setReqTab] = useState<ReqTab>('params');
   const [splitPct, setSplitPct] = useState(0.45);
   const [dragging, setDragging] = useState(false);
+  const [splitDir, setSplitDir] = useState<'v' | 'h'>('v');
   const [ExplorerHotkeys, setExplorerHotkeys] = useState<typeof import('../components/ExplorerHotkeys').ExplorerHotkeys | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
@@ -1866,6 +1868,7 @@ function ExplorerPage() {
   const [interceptRules, setInterceptRules] = useState<InterceptRule[]>([]);
   const [proxyGuideOpen, setProxyGuideOpen] = useState(false);
   const [reqSettingsOpen, setReqSettingsOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   // ── Stable refs so hotkey callbacks never go stale ──────────────────────
   const sendRef      = useRef<null | (() => Promise<void>)>(null);
@@ -1907,15 +1910,6 @@ function ExplorerPage() {
     setActiveWsId(DEFAULT_WORKSPACE_ID);
     setWsModalOpen(false);
   };
-  const addWs = async () => {
-    const name = prompt('Workspace name');
-    if (!name?.trim()) return;
-    const w: Workspace = { ...defaultWorkspace(), id: `ws-${Date.now()}`, name: name.trim() };
-    await saveWorkspace(w).catch(() => {});
-    setWorkspaces(prev => [...prev, w]);
-    setActiveWsId(w.id);
-  };
-
   // ── Load from IndexedDB on mount ──────────────────────────────────────────
   useEffect(() => {
     dbGet<{ id: string; tabs: RequestTab[]; activeTabId: string }>('explorer', 'state')
@@ -2211,10 +2205,15 @@ function ExplorerPage() {
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();
     setDragging(true);
+    const dir = splitDir; // capture at mousedown time
     const onMove = (ev: MouseEvent) => {
       if (!containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
-      setSplitPct(Math.max(0.2, Math.min(0.8, (ev.clientY - rect.top) / rect.height)));
+      if (dir === 'v') {
+        setSplitPct(Math.max(0.2, Math.min(0.8, (ev.clientY - rect.top) / rect.height)));
+      } else {
+        setSplitPct(Math.max(0.2, Math.min(0.8, (ev.clientX - rect.left) / rect.width)));
+      }
     };
     const onUp = () => {
       setDragging(false);
@@ -2321,30 +2320,79 @@ function ExplorerPage() {
       {/* ── Content rows */}
       <div className="flex flex-1 overflow-hidden min-h-0">
 
+        {/* ── Left panel: endpoint tree */}
+        {endpointPanelOpen && (
+          <div className="w-[240px] min-w-[180px] border-r border-[var(--border)] flex flex-col overflow-hidden bg-[var(--sidebar)] flex-shrink-0">
+            {/* Panel header with tab toggle */}
+            <div className="flex items-center h-[37px] px-2 border-b border-[var(--border)] flex-shrink-0 gap-0.5">
+              <button
+                onClick={() => setShowSaved(false)}
+                className={cn(
+                  'flex items-center gap-1 px-2 h-6 rounded text-[11px] font-medium transition-colors',
+                  !showSaved
+                    ? 'bg-[color-mix(in_srgb,var(--foreground)_10%,transparent)] text-[var(--foreground)]'
+                    : 'text-[var(--placeholder-foreground)] hover:text-[var(--muted-foreground)] hover:bg-[color-mix(in_srgb,var(--foreground)_5%,transparent)]',
+                )}
+              >
+                Endpoints
+                {!showSaved && operations.length > 0 && (
+                  <span className="text-[9px] font-mono opacity-60">{operations.length}</span>
+                )}
+              </button>
+              <button
+                onClick={() => setShowSaved(true)}
+                className={cn(
+                  'flex items-center gap-1 px-2 h-6 rounded text-[11px] font-medium transition-colors',
+                  showSaved
+                    ? 'bg-[color-mix(in_srgb,var(--foreground)_10%,transparent)] text-[var(--foreground)]'
+                    : 'text-[var(--placeholder-foreground)] hover:text-[var(--muted-foreground)] hover:bg-[color-mix(in_srgb,var(--foreground)_5%,transparent)]',
+                )}
+              >
+                <Bookmark size={10} />
+                Saved
+                {showSaved && savedRequests.length > 0 && (
+                  <span className="text-[9px] font-mono opacity-60">{savedRequests.length}</span>
+                )}
+              </button>
+            </div>
+
+            {/* Panel body */}
+            {!showSaved ? (
+              operations.length > 0
+                ? <EndpointTree
+                    ops={operations}
+                    onSelect={openEndpoint}
+                    activeId={activeOpId}
+                    onContextMenu={(e, op) => { e.preventDefault(); setEpCtxMenu({ x: e.clientX, y: e.clientY, op }); }}
+                  />
+                : <div className="empty-state"><span className="text-[12px]">No spec loaded</span></div>
+            ) : (
+              <div className="flex-1 overflow-y-auto">
+                {savedRequests.length === 0 ? (
+                  <div className="empty-state">
+                    <Bookmark size={20} style={{ opacity: 0.3 }} />
+                    <span className="text-[12px]">No saved requests</span>
+                    <span className="text-[11px] text-[var(--placeholder-foreground)] text-center px-4">
+                      Click <BookmarkPlus size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> in the URL bar to save
+                    </span>
+                  </div>
+                ) : (
+                  <SavedPanel
+                    requests={savedRequests}
+                    onLoad={loadSavedRequest}
+                    onDelete={deleteSavedRequest}
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── Main panel */}
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
 
           {/* ── Tab strip */}
           <div className="tab-strip">
-            {/* Workspace selector */}
-            <div className="flex items-center gap-1 flex-shrink-0 px-2 border-r border-[var(--border)]" style={{ alignSelf: 'stretch' }}>
-              <select
-                className="text-[12px] bg-transparent border-0 outline-none cursor-pointer font-medium text-[var(--muted-foreground)] font-sans max-w-[120px]"
-                value={activeWsId}
-                onChange={e => { if (e.target.value === '__new__') { addWs(); } else setActiveWsId(e.target.value); }}
-              >
-                {workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                <option value="__new__">+ New workspace…</option>
-              </select>
-              <button
-                className="flex items-center justify-center w-5 h-5 rounded hover:bg-[color-mix(in_srgb,var(--foreground)_8%,transparent)] text-[var(--placeholder-foreground)] hover:text-[var(--muted-foreground)] transition-colors flex-shrink-0"
-                onClick={() => setWsModalOpen(true)}
-                title="Workspace settings (auth, headers, env)"
-              >
-                <Settings2 size={11} />
-              </button>
-            </div>
-
             {/* Tabs list */}
             <div className="flex items-stretch flex-1 overflow-x-auto min-w-0">
               {wsTabs.map(t => (
@@ -2389,6 +2437,35 @@ function ExplorerPage() {
 
             {/* Right controls */}
             <div className="flex items-center gap-1.5 flex-shrink-0 px-2 border-l border-[var(--border)]">
+              {/* Split layout toggle */}
+              <div className="flex items-center gap-px">
+                <button
+                  className={cn(
+                    'flex items-center justify-center w-5 h-5 rounded transition-colors',
+                    splitDir === 'v'
+                      ? 'text-[var(--accent)] bg-[var(--accent-dim)]'
+                      : 'text-[var(--placeholder-foreground)] hover:text-[var(--muted-foreground)] hover:bg-[color-mix(in_srgb,var(--foreground)_5%,transparent)]',
+                  )}
+                  onClick={() => setSplitDir('v')}
+                  title="Vertical split (stacked)"
+                >
+                  <Rows2 size={11} />
+                </button>
+                <button
+                  className={cn(
+                    'flex items-center justify-center w-5 h-5 rounded transition-colors',
+                    splitDir === 'h'
+                      ? 'text-[var(--accent)] bg-[var(--accent-dim)]'
+                      : 'text-[var(--placeholder-foreground)] hover:text-[var(--muted-foreground)] hover:bg-[color-mix(in_srgb,var(--foreground)_5%,transparent)]',
+                  )}
+                  onClick={() => setSplitDir('h')}
+                  title="Horizontal split (side by side)"
+                >
+                  <Columns2 size={11} />
+                </button>
+              </div>
+              <div className="w-px h-3 bg-[var(--border)] flex-shrink-0" />
+              {/* Env selector */}
               <div className="flex items-center gap-1">
                 {activeEnv && <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: activeEnv.color }} />}
                 <select
@@ -2526,22 +2603,88 @@ function ExplorerPage() {
                 ? <><span className="spinner" style={{ width: 11, height: 11 }} /> Sending…</>
                 : <><Send size={12} /> Send</>}
             </button>
-            <button
-              className="flex items-center justify-center w-[30px] h-[30px] rounded-md border border-[var(--border)] bg-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:border-[var(--border-hover)] transition-colors flex-shrink-0"
-              onClick={() => setCodeOpen(true)} disabled={!tab.url} title="Copy as code (cURL, fetch, axios…)"
-            >
-              <Code2 size={12} />
-            </button>
-            {/* Save request */}
+            {/* ⋯ More actions */}
             <div className="relative flex-shrink-0">
               <button
-                className="flex items-center justify-center w-[30px] h-[30px] rounded-md border border-[var(--border)] bg-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:border-[var(--border-hover)] transition-colors"
-                onClick={() => setSavePopup(p => ({ ...p, open: !p.open, name: p.name || tab.title }))}
-                disabled={!tab.url}
-                title="Save request"
+                className={cn(
+                  'flex items-center justify-center w-[30px] h-[30px] rounded-md border transition-colors flex-shrink-0',
+                  moreOpen
+                    ? 'border-[var(--border-hover)] bg-[var(--elevated)] text-[var(--foreground)]'
+                    : 'border-[var(--border)] bg-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:border-[var(--border-hover)]'
+                )}
+                onClick={() => setMoreOpen(v => !v)}
+                title="More actions"
               >
-                <BookmarkPlus size={12} />
+                <MoreHorizontal size={14} />
               </button>
+
+              {moreOpen && (
+                <>
+                  <div className="fixed inset-0 z-[1999]" onClick={() => setMoreOpen(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-[2000] rounded-lg border border-[var(--border)] bg-[var(--popover)] shadow-lg py-1 min-w-[200px]">
+                    {/* Code */}
+                    <button
+                      className="ctx-item"
+                      onClick={() => { setCodeOpen(true); setMoreOpen(false); }}
+                      disabled={!tab.url}
+                    >
+                      <Code2 size={13} />
+                      <span>Copy as code</span>
+                      <span className="ml-auto text-[10px] font-mono text-[var(--placeholder-foreground)]">cURL · fetch</span>
+                    </button>
+                    {/* Save */}
+                    <button
+                      className="ctx-item"
+                      onClick={() => { setSavePopup(p => ({ ...p, open: true, name: p.name || tab.title })); setMoreOpen(false); }}
+                      disabled={!tab.url}
+                    >
+                      <BookmarkPlus size={13} />
+                      <span>Save request</span>
+                    </button>
+                    {/* Share */}
+                    <button
+                      className="ctx-item"
+                      onClick={() => { shareRequest(); setMoreOpen(false); }}
+                      disabled={!tab.url}
+                      style={{ color: shareCopied ? 'var(--success,#22c55e)' : undefined }}
+                    >
+                      {shareCopied ? <Check size={13} /> : <Share2 size={13} />}
+                      <span>{shareCopied ? 'Copied!' : 'Share request'}</span>
+                    </button>
+                    <div className="ctx-sep" />
+                    {/* Settings */}
+                    <button
+                      className={cn('ctx-item', (tab.timeout > 0 || !tab.followRedirects) && 'text-[var(--accent)]')}
+                      onClick={() => { setReqSettingsOpen(v => !v); setMoreOpen(false); }}
+                    >
+                      <SlidersHorizontal size={13} />
+                      <span>Request settings</span>
+                      {(tab.timeout > 0 || !tab.followRedirects) && (
+                        <span className="ml-auto text-[9px] bg-[var(--accent-dim)] text-[var(--accent)] rounded px-1">custom</span>
+                      )}
+                    </button>
+                    {/* Reset */}
+                    <button
+                      className="ctx-item"
+                      onClick={() => { upd(tab.id, { response: null, url: '', title: 'New Request', params: [{ key: '', value: '', enabled: true }], pathParams: [], headers: [{ key: '', value: '', enabled: true }], body: '', bodyType: 'none', rawType: 'text/plain', binaryFile: null, formRows: [{ key: '', value: '', enabled: true, kind: 'text' }], auth: { ...DEFAULT_AUTH }, testResults: null }); setMoreOpen(false); }}
+                    >
+                      <RotateCcw size={13} />
+                      <span>Reset request</span>
+                    </button>
+                    <div className="ctx-sep" />
+                    {/* Proxy guide */}
+                    <button
+                      className="ctx-item"
+                      onClick={() => { setProxyGuideOpen(true); setMoreOpen(false); }}
+                    >
+                      <Info size={13} />
+                      <span>Proxy &amp; intercept guide</span>
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {/* Save popup (triggered from More menu) */}
               {savePopup.open && (
                 <>
                   <div className="fixed inset-0 z-[1999]" onClick={() => setSavePopup(p => ({ ...p, open: false }))} />
@@ -2572,36 +2715,8 @@ function ExplorerPage() {
                   </div>
                 </>
               )}
-            </div>
-            {/* Share request */}
-            <button
-              className="flex items-center justify-center w-[30px] h-[30px] rounded-md border border-[var(--border)] bg-transparent transition-colors flex-shrink-0"
-              style={{ color: shareCopied ? 'var(--success,#22c55e)' : 'var(--muted-foreground)', borderColor: shareCopied ? 'var(--success,#22c55e)' : 'var(--border)' }}
-              onClick={shareRequest}
-              disabled={!tab.url}
-              title="Copy request as JSON"
-            >
-              {shareCopied ? <Check size={12} /> : <Share2 size={12} />}
-            </button>
-            <button
-              className="flex items-center justify-center w-[30px] h-[30px] rounded-md border border-[var(--border)] bg-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:border-[var(--border-hover)] transition-colors flex-shrink-0"
-              onClick={() => upd(tab.id, { response: null, url: '', title: 'New Request', params: [{ key: '', value: '', enabled: true }], pathParams: [], headers: [{ key: '', value: '', enabled: true }], body: '', bodyType: 'none', rawType: 'text/plain', binaryFile: null, formRows: [{ key: '', value: '', enabled: true, kind: 'text' }], auth: { ...DEFAULT_AUTH }, testResults: null })}
-              title="Clear (Alt+R)"
-            >
-              <RotateCcw size={12} />
-            </button>
-            {/* Request settings popover */}
-            <div className="relative flex-shrink-0">
-              <button
-                className={cn('flex items-center justify-center w-[30px] h-[30px] rounded-md border transition-colors flex-shrink-0',
-                  reqSettingsOpen || tab.timeout > 0 || !tab.followRedirects
-                    ? 'border-[var(--accent,#6366f1)] text-[var(--accent,#6366f1)] bg-[color-mix(in_srgb,var(--accent,#6366f1)_8%,transparent)]'
-                    : 'border-[var(--border)] bg-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:border-[var(--border-hover)]')}
-                onClick={() => setReqSettingsOpen(v => !v)}
-                title="Request settings (timeout, redirects)"
-              >
-                <SlidersHorizontal size={12} />
-              </button>
+
+              {/* Request settings popup (triggered from More menu) */}
               {reqSettingsOpen && (
                 <>
                   <div className="fixed inset-0 z-[1999]" onClick={() => setReqSettingsOpen(false)} />
@@ -2627,14 +2742,6 @@ function ExplorerPage() {
                 </>
               )}
             </div>
-            {/* Proxy guide */}
-            <button
-              className="flex items-center justify-center w-[30px] h-[30px] rounded-md border border-[var(--border)] bg-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:border-[var(--border-hover)] transition-colors flex-shrink-0"
-              onClick={() => setProxyGuideOpen(true)}
-              title="Proxy & intercept guide"
-            >
-              <Info size={12} />
-            </button>
           </div>
 
           {/* ── Sub-tabs + destination info (inline right side) */}
@@ -2681,10 +2788,13 @@ function ExplorerPage() {
           </div>
 
           {/* ── Resizable split */}
-          <div ref={containerRef} className="flex-1 flex flex-col overflow-hidden">
+          <div ref={containerRef} className={cn('flex-1 overflow-hidden', splitDir === 'v' ? 'flex flex-col' : 'flex flex-row')}>
 
             {/* Request panel */}
-            <div className="flex flex-col overflow-hidden" style={{ height: `${splitPct * 100}%` }}>
+            <div
+              className="flex flex-col overflow-hidden"
+              style={splitDir === 'v' ? { height: `${splitPct * 100}%` } : { width: `${splitPct * 100}%` }}
+            >
               <div className={cn('flex-1 overflow-auto', reqTab !== 'body' && reqTab !== 'payload' && reqTab !== 'tests' && 'p-3')}>
 
                 {reqTab === 'params' && (
@@ -2782,82 +2892,18 @@ function ExplorerPage() {
             </div>
 
             {/* Resize handle */}
-            <div className={cn('resize-handle-y', dragging && 'dragging')} onMouseDown={startResize} />
+            <div
+              className={cn(splitDir === 'v' ? 'resize-handle-y' : 'resize-handle-x', dragging && 'dragging')}
+              onMouseDown={startResize}
+            />
 
             {/* ── Response panel */}
-            <div className="flex-1 flex flex-col overflow-hidden border-t border-[var(--border)]">
+            <div className={cn('flex-1 flex flex-col overflow-hidden', splitDir === 'v' ? 'border-t border-[var(--border)]' : 'border-l border-[var(--border)]')}>
               <ResponsePanel response={tab.response} loading={tab.loading} />
             </div>
           </div>
         </div>
 
-        {/* ── Right panel: endpoint tree */}
-        {endpointPanelOpen && (
-          <div className="w-[252px] min-w-[200px] border-l border-[var(--border)] flex flex-col overflow-hidden bg-[var(--sidebar)] flex-shrink-0">
-            {/* Panel header with tab toggle */}
-            <div className="flex items-center h-[37px] px-2 border-b border-[var(--border)] flex-shrink-0 gap-0.5">
-              <button
-                onClick={() => setShowSaved(false)}
-                className={cn(
-                  'flex items-center gap-1 px-2 h-6 rounded text-[11px] font-medium transition-colors',
-                  !showSaved
-                    ? 'bg-[color-mix(in_srgb,var(--foreground)_10%,transparent)] text-[var(--foreground)]'
-                    : 'text-[var(--placeholder-foreground)] hover:text-[var(--muted-foreground)] hover:bg-[color-mix(in_srgb,var(--foreground)_5%,transparent)]',
-                )}
-              >
-                Endpoints
-                {!showSaved && operations.length > 0 && (
-                  <span className="text-[9px] font-mono opacity-60">{operations.length}</span>
-                )}
-              </button>
-              <button
-                onClick={() => setShowSaved(true)}
-                className={cn(
-                  'flex items-center gap-1 px-2 h-6 rounded text-[11px] font-medium transition-colors',
-                  showSaved
-                    ? 'bg-[color-mix(in_srgb,var(--foreground)_10%,transparent)] text-[var(--foreground)]'
-                    : 'text-[var(--placeholder-foreground)] hover:text-[var(--muted-foreground)] hover:bg-[color-mix(in_srgb,var(--foreground)_5%,transparent)]',
-                )}
-              >
-                <Bookmark size={10} />
-                Saved
-                {showSaved && savedRequests.length > 0 && (
-                  <span className="text-[9px] font-mono opacity-60">{savedRequests.length}</span>
-                )}
-              </button>
-            </div>
-
-            {/* Panel body */}
-            {!showSaved ? (
-              operations.length > 0
-                ? <EndpointTree
-                    ops={operations}
-                    onSelect={openEndpoint}
-                    activeId={activeOpId}
-                    onContextMenu={(e, op) => { e.preventDefault(); setEpCtxMenu({ x: e.clientX, y: e.clientY, op }); }}
-                  />
-                : <div className="empty-state"><span className="text-[12px]">No spec loaded</span></div>
-            ) : (
-              <div className="flex-1 overflow-y-auto">
-                {savedRequests.length === 0 ? (
-                  <div className="empty-state">
-                    <Bookmark size={20} style={{ opacity: 0.3 }} />
-                    <span className="text-[12px]">No saved requests</span>
-                    <span className="text-[11px] text-[var(--placeholder-foreground)] text-center px-4">
-                      Click <BookmarkPlus size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> in the URL bar to save
-                    </span>
-                  </div>
-                ) : (
-                  <SavedPanel
-                    requests={savedRequests}
-                    onLoad={loadSavedRequest}
-                    onDelete={deleteSavedRequest}
-                  />
-                )}
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
       {/* ── Status bar */}

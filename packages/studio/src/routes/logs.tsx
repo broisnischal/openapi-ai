@@ -2,7 +2,8 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { apiClient } from '../lib/api';
 import { useApp } from '../context';
-import { Trash2, Pause, Play, Terminal, Copy, Check, ExternalLink } from 'lucide-react';
+import { Trash2, Pause, Play, Terminal, Copy, Check, ExternalLink, ChevronDown, ChevronRight } from 'lucide-react';
+import { cn } from '../lib/utils';
 
 export const Route = createFileRoute('/logs')({ component: LogsPage });
 
@@ -16,15 +17,20 @@ interface LogEntry {
 
 interface CtxMenu { x: number; y: number; log: LogEntry }
 
-function scClass(s: number | null) {
-  if (!s) return '';
-  if (s < 300) return 'status-ok';
-  if (s < 400) return 'status-redir';
-  if (s < 500) return 'status-err';
-  return 'status-fatal';
+const METHOD_COLOR: Record<string, string> = {
+  GET: '#22c55e', POST: '#3b82f6', PUT: '#f59e0b',
+  PATCH: '#8b5cf6', DELETE: '#ef4444', HEAD: '#64748b', OPTIONS: '#64748b',
+};
+
+function statusColor(s: number | null) {
+  if (!s) return 'var(--muted-foreground)';
+  if (s < 300) return '#22c55e';
+  if (s < 400) return '#f59e0b';
+  if (s < 500) return '#ef4444';
+  return '#dc2626';
 }
 
-function trunc(s: string, n = 70) {
+function trunc(s: string, n = 68) {
   try { const u = new URL(s); s = u.pathname + u.search; } catch { /* not a URL */ }
   return s.length > n ? s.slice(0, n) + '…' : s;
 }
@@ -45,8 +51,7 @@ function logToCurl(log: LogEntry): string {
     }
   } catch { /* ignore */ }
   if (log.request_body) {
-    const escaped = log.request_body.replace(/'/g, "'\\''");
-    cmd += ` \\\n  -d '${escaped}'`;
+    cmd += ` \\\n  -d '${log.request_body.replace(/'/g, "'\\''")}'`;
   }
   cmd += ` \\\n  '${log.url}'`;
   return cmd;
@@ -70,6 +75,17 @@ function openLogInExplorer(log: LogEntry, navigate: ReturnType<typeof useNavigat
   void navigate({ to: '/explorer' });
 }
 
+function BodyBlock({ body }: { body: string | null }) {
+  if (!body) return <span className="text-[11.5px] italic text-[var(--muted-foreground)]">No body</span>;
+  let pretty = body;
+  try { pretty = JSON.stringify(JSON.parse(body), null, 2); } catch { /* raw */ }
+  return (
+    <pre className="max-h-48 overflow-auto rounded-lg bg-[color-mix(in_srgb,var(--foreground)_5%,transparent)] p-2.5 font-mono text-[11px] leading-relaxed text-[var(--foreground)] whitespace-pre-wrap break-all">
+      {pretty}
+    </pre>
+  );
+}
+
 function LogDetail({ log, onOpenInExplorer }: { log: LogEntry; onOpenInExplorer: () => void }) {
   const [tab, setTab] = useState<'response' | 'request'>('response');
   const body = tab === 'response' ? log.response_body : log.request_body;
@@ -78,41 +94,43 @@ function LogDetail({ log, onOpenInExplorer }: { log: LogEntry; onOpenInExplorer:
   try { ph = JSON.parse(hdrs ?? '{}'); } catch { /* ignore */ }
 
   return (
-    <div style={{ padding: '0 16px 14px', borderTop: '1px solid var(--border)' }}>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 10, paddingTop: 10 }}>
-        <button
-          className="btn btn-ghost btn-sm"
-          style={{ gap: 5, fontSize: 11 }}
-          onClick={onOpenInExplorer}
-          title="Open in Explorer to edit and replay"
-        >
-          <Terminal size={11} /> Open in Explorer
-        </button>
-      </div>
-      <div className="sub-tab-bar" style={{ marginBottom: 8 }}>
+    <div className="border-t border-[var(--border)] px-4 pb-4 pt-3">
+      {/* Open in explorer */}
+      <button
+        type="button"
+        onClick={onOpenInExplorer}
+        className="mb-3 flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2.5 py-1.5 text-[11.5px] text-[var(--foreground-secondary)] transition-colors hover:border-[var(--border-hover)] hover:text-[var(--foreground)]"
+      >
+        <Terminal size={11} /> Open in Explorer
+      </button>
+
+      {/* Sub-tabs */}
+      <div className="mb-3 flex gap-1 border-b border-[var(--border)]">
         {(['response', 'request'] as const).map(t => (
-          <button key={t} className={`sub-tab${tab === t ? ' active' : ''}`} onClick={() => setTab(t)}>
-            {t.charAt(0).toUpperCase() + t.slice(1)}
+          <button key={t} type="button" onClick={() => setTab(t)}
+            className={cn(
+              'relative px-3 py-1.5 text-[12px] font-medium capitalize transition-colors',
+              tab === t ? 'text-[var(--foreground)]' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground-secondary)]',
+            )}>
+            {t}
+            {tab === t && <span className="absolute inset-x-0 -bottom-px h-[1.5px] rounded-t-full bg-[var(--foreground)]" />}
           </button>
         ))}
       </div>
+
+      {/* Headers */}
       {Object.keys(ph).length > 0 && (
-        <div style={{ marginBottom: 8 }}>
-          {Object.entries(ph).slice(0, 8).map(([k, v]) => (
-            <div key={k} style={{ display: 'flex', gap: 8, fontSize: 11, padding: '2px 0', borderBottom: '1px solid var(--border)' }}>
-              <span style={{ fontFamily: 'JetBrains Mono,monospace', color: 'var(--text-3)', minWidth: 180, flexShrink: 0 }}>{k}</span>
-              <span style={{ color: 'var(--text-2)', wordBreak: 'break-all' }}>{v}</span>
+        <div className="mb-3 rounded-lg border border-[var(--border)] overflow-hidden">
+          {Object.entries(ph).slice(0, 8).map(([k, v], i) => (
+            <div key={k} className={cn('flex gap-3 px-3 py-1.5 text-[11px]', i > 0 && 'border-t border-[var(--border)]')}>
+              <span className="w-[160px] shrink-0 font-mono text-[var(--muted-foreground)] truncate">{k}</span>
+              <span className="flex-1 text-[var(--foreground-secondary)] break-all">{v}</span>
             </div>
           ))}
         </div>
       )}
-      {body ? (
-        <pre style={{ fontSize: 11, lineHeight: 1.6, color: 'var(--text-2)', whiteSpace: 'pre-wrap', wordBreak: 'break-all', background: 'var(--bg-elevated)', borderRadius: 6, padding: '8px 10px', maxHeight: 220, overflow: 'auto', margin: 0 }}>
-          {(() => { try { return JSON.stringify(JSON.parse(body), null, 2); } catch { return body; } })()}
-        </pre>
-      ) : (
-        <div style={{ fontSize: 12, color: 'var(--text-3)', fontStyle: 'italic' }}>No body</div>
-      )}
+
+      <BodyBlock body={body} />
     </div>
   );
 }
@@ -130,7 +148,6 @@ function LogsPage() {
 
   useEffect(() => { pausedRef.current = paused; }, [paused]);
 
-  // Load recent logs from DB on mount
   useEffect(() => {
     apiClient<LogEntry[]>('/api/logs?limit=100').then(initial => {
       setLogs(prev => {
@@ -139,7 +156,6 @@ function LogsPage() {
         return [...prev, ...fresh].slice(0, 500);
       });
     }).catch(() => {});
-    // Live entries come via the global WebSocket in __root.tsx
     const handler = (e: Event) => {
       if (pausedRef.current) return;
       const m = (e as CustomEvent<LogEntry>).detail;
@@ -171,30 +187,41 @@ function LogsPage() {
     return true;
   });
 
+  const FILTERS = ['all', 'mcp', 'explorer', 'error'] as const;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* Context menu overlay */}
+    <div className="flex h-full flex-col overflow-hidden bg-[var(--background)]">
+
+      {/* Context menu */}
       {ctxMenu && (
         <>
           <div className="fixed inset-0 z-[1999]" onClick={() => setCtxMenu(null)} onContextMenu={e => { e.preventDefault(); setCtxMenu(null); }} />
-          <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
-            <button className="ctx-item" onClick={() => { openLogInExplorer(ctxMenu.log, navigate); setCtxMenu(null); }}>
+          <div
+            className="fixed z-[2000] min-w-[168px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--popover)] py-1 shadow-xl"
+            style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          >
+            <button type="button" className="flex w-full items-center gap-2.5 px-3 py-2 text-[12px] text-[var(--foreground-secondary)] hover:bg-[var(--elevated)] hover:text-[var(--foreground)] transition-colors"
+              onClick={() => { openLogInExplorer(ctxMenu.log, navigate); setCtxMenu(null); }}>
               <Terminal size={12} /> Open in Explorer
             </button>
-            <div className="ctx-sep" />
-            <button className="ctx-item" onClick={() => { copy(ctxMenu.log.url, 'url'); setCtxMenu(null); }}>
+            <div className="my-1 h-px bg-[var(--border)]" />
+            <button type="button" className="flex w-full items-center gap-2.5 px-3 py-2 text-[12px] text-[var(--foreground-secondary)] hover:bg-[var(--elevated)] hover:text-[var(--foreground)] transition-colors"
+              onClick={() => { copy(ctxMenu.log.url, 'url'); setCtxMenu(null); }}>
               {copied === 'url' ? <Check size={12} /> : <Copy size={12} />} Copy URL
             </button>
-            <button className="ctx-item" onClick={() => { copy(logToCurl(ctxMenu.log), 'curl'); setCtxMenu(null); }}>
+            <button type="button" className="flex w-full items-center gap-2.5 px-3 py-2 text-[12px] text-[var(--foreground-secondary)] hover:bg-[var(--elevated)] hover:text-[var(--foreground)] transition-colors"
+              onClick={() => { copy(logToCurl(ctxMenu.log), 'curl'); setCtxMenu(null); }}>
               {copied === 'curl' ? <Check size={12} /> : <ExternalLink size={12} />} Copy as cURL
             </button>
             {ctxMenu.log.request_body && (
-              <button className="ctx-item" onClick={() => { copy(ctxMenu.log.request_body!, 'body'); setCtxMenu(null); }}>
+              <button type="button" className="flex w-full items-center gap-2.5 px-3 py-2 text-[12px] text-[var(--foreground-secondary)] hover:bg-[var(--elevated)] hover:text-[var(--foreground)] transition-colors"
+                onClick={() => { copy(ctxMenu.log.request_body!, 'body'); setCtxMenu(null); }}>
                 {copied === 'body' ? <Check size={12} /> : <Copy size={12} />} Copy Request Body
               </button>
             )}
             {ctxMenu.log.response_body && (
-              <button className="ctx-item" onClick={() => { copy(ctxMenu.log.response_body!, 'resp'); setCtxMenu(null); }}>
+              <button type="button" className="flex w-full items-center gap-2.5 px-3 py-2 text-[12px] text-[var(--foreground-secondary)] hover:bg-[var(--elevated)] hover:text-[var(--foreground)] transition-colors"
+                onClick={() => { copy(ctxMenu.log.response_body!, 'resp'); setCtxMenu(null); }}>
                 {copied === 'resp' ? <Check size={12} /> : <Copy size={12} />} Copy Response Body
               </button>
             )}
@@ -202,72 +229,124 @@ function LogsPage() {
         </>
       )}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 20px', borderBottom: '1px solid var(--border)', background: 'var(--background)', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span className="dot dot-pulse" style={{ background: wsConnected ? 'var(--green)' : 'var(--yellow)' }} />
-          <span style={{ fontWeight: 600, fontSize: 14 }}>Live Logs</span>
-          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{wsConnected ? 'connected' : 'reconnecting…'}</span>
+      {/* Header */}
+      <header className="flex shrink-0 items-center gap-3 border-b border-[var(--border)] bg-[var(--background)] px-4 py-2.5">
+        <div className="flex items-center gap-2">
+          <span
+            className="size-2 rounded-full transition-colors"
+            style={{
+              background: wsConnected ? '#22c55e' : '#f59e0b',
+              boxShadow: wsConnected ? '0 0 6px rgba(34,197,94,0.5)' : 'none',
+            }}
+          />
+          <span className="text-[13.5px] font-semibold">Live Logs</span>
+          <span className="text-[11.5px] text-[var(--muted-foreground)]">{wsConnected ? 'connected' : 'reconnecting…'}</span>
         </div>
-        <div style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
-          {(['all', 'mcp', 'explorer', 'error'] as const).map(f => (
-            <button key={f} onClick={() => setFilter(f)} className="btn btn-ghost btn-sm"
-              style={filter === f ? { background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', borderColor: 'rgba(99,102,241,0.3)' } : {}}>
+
+        {/* Filter chips */}
+        <div className="flex gap-1">
+          {FILTERS.map(f => (
+            <button key={f} type="button" onClick={() => setFilter(f)}
+              className={cn(
+                'rounded-md px-2.5 py-1 text-[11.5px] font-medium capitalize transition-colors',
+                filter === f
+                  ? 'bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] text-[var(--accent)] border border-[color-mix(in_srgb,var(--accent)_30%,transparent)]'
+                  : 'border border-transparent text-[var(--muted-foreground)] hover:bg-[var(--elevated)] hover:text-[var(--foreground-secondary)]',
+              )}>
               {f}
             </button>
           ))}
         </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-          <button className="btn btn-ghost btn-sm" onClick={() => setPaused(p => !p)} style={{ gap: 5 }}>
-            {paused ? <><Play size={12} />Resume</> : <><Pause size={12} />Pause</>}
+
+        {/* Actions */}
+        <div className="ml-auto flex items-center gap-2">
+          <button type="button" onClick={() => setPaused(p => !p)}
+            className="flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2.5 py-1.5 text-[11.5px] text-[var(--foreground-secondary)] transition-colors hover:border-[var(--border-hover)] hover:text-[var(--foreground)]">
+            {paused ? <><Play size={11} /> Resume</> : <><Pause size={11} /> Pause</>}
           </button>
-          <button className="btn btn-danger btn-sm" onClick={clear} style={{ gap: 5 }}>
-            <Trash2 size={12} />Clear
+          <button type="button" onClick={clear}
+            className="flex items-center gap-1.5 rounded-md border border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.06)] px-2.5 py-1.5 text-[11.5px] text-[var(--destructive)] transition-colors hover:bg-[rgba(239,68,68,0.12)]">
+            <Trash2 size={11} /> Clear
           </button>
         </div>
-      </div>
+      </header>
 
-      <div style={{ flex: 1, overflowY: 'auto' }}>
+      {/* Log list */}
+      <div className="flex-1 overflow-y-auto">
         {filtered.length === 0 ? (
-          <div className="empty-state">
-            <div style={{ fontSize: 13, fontWeight: 500 }}>
+          <div className="flex flex-col items-center justify-center gap-2 py-20 text-center">
+            <div className="text-[13px] font-medium text-[var(--foreground-secondary)]">
               {logs.length === 0 ? 'Waiting for requests…' : 'No logs match this filter'}
             </div>
-            <div style={{ fontSize: 12 }}>
+            <div className="text-[12px] text-[var(--muted-foreground)]">
               {wsConnected ? 'Connected — requests appear here in real-time' : 'Reconnecting…'}
             </div>
           </div>
-        ) : filtered.map(log => (
-          <div key={log.id} style={{ borderBottom: '1px solid var(--border)' }}>
-            <button
-              onClick={() => toggle(log.id)}
-              onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, log }); }}
-              style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '7px 14px', background: expanded.has(log.id) ? 'rgba(99,102,241,0.04)' : 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
-            >
-              <span style={{ fontFamily: 'JetBrains Mono,monospace', fontSize: 10, color: 'var(--text-3)', flexShrink: 0, width: 70 }}>
-                {fmtTs(log.created_at)}
-              </span>
-              <span className={`method-badge method-${(log.method ?? 'GET').toUpperCase()}`}>
-                {(log.method ?? 'GET').toUpperCase()}
-              </span>
-              <span style={{ flex: 1, fontSize: 12, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'JetBrains Mono,monospace' }}>
-                {trunc(log.url)}
-              </span>
-              {log.status_code !== null && (
-                <span className={scClass(log.status_code)} style={{ fontFamily: 'JetBrains Mono,monospace', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
-                  {log.status_code}
-                </span>
-              )}
-              {log.latency_ms !== null && (
-                <span style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>{log.latency_ms}ms</span>
-              )}
-              <span style={{ fontSize: 10, background: 'var(--bg-subtle)', color: 'var(--text-3)', borderRadius: 3, padding: '1px 5px', flexShrink: 0 }}>
-                {log.source}
-              </span>
-              {log.error && <span style={{ color: 'var(--red)', fontSize: 11, flexShrink: 0 }}>ERR</span>}
-            </button>
-            {expanded.has(log.id) && <LogDetail log={log} onOpenInExplorer={() => openLogInExplorer(log, navigate)} />}
-          </div>
-        ))}
+        ) : (
+          filtered.map(log => {
+            const isExpanded = expanded.has(log.id);
+            const mc = METHOD_COLOR[(log.method ?? 'GET').toUpperCase()] ?? 'var(--muted-foreground)';
+            return (
+              <div key={log.id} className={cn('border-b border-[var(--border)]', isExpanded && 'bg-[color-mix(in_srgb,var(--foreground)_2%,transparent)]')}>
+                {/* Row */}
+                <button
+                  type="button"
+                  onClick={() => toggle(log.id)}
+                  onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, log }); }}
+                  className="flex w-full items-center gap-3 px-4 py-2 text-left hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)] transition-colors"
+                >
+                  {/* Expand chevron */}
+                  <span className="shrink-0 text-[var(--muted-foreground)]">
+                    {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                  </span>
+
+                  {/* Timestamp */}
+                  <span className="w-[62px] shrink-0 font-mono text-[10.5px] text-[var(--muted-foreground)]">
+                    {fmtTs(log.created_at)}
+                  </span>
+
+                  {/* Method badge */}
+                  <span
+                    className="w-14 shrink-0 rounded px-1.5 py-0.5 text-center font-mono text-[10px] font-bold"
+                    style={{ color: mc, background: `${mc}18` }}
+                  >
+                    {(log.method ?? 'GET').toUpperCase()}
+                  </span>
+
+                  {/* URL */}
+                  <span className="flex-1 overflow-hidden truncate font-mono text-[12px] text-[var(--foreground)]">
+                    {trunc(log.url)}
+                  </span>
+
+                  {/* Status */}
+                  {log.status_code !== null && (
+                    <span className="shrink-0 font-mono text-[12px] font-bold" style={{ color: statusColor(log.status_code) }}>
+                      {log.status_code}
+                    </span>
+                  )}
+
+                  {/* Latency */}
+                  {log.latency_ms !== null && (
+                    <span className="shrink-0 font-mono text-[11px] text-[var(--muted-foreground)]">{log.latency_ms}ms</span>
+                  )}
+
+                  {/* Source */}
+                  <span className="shrink-0 rounded bg-[var(--elevated)] px-1.5 py-0.5 text-[10px] text-[var(--muted-foreground)]">
+                    {log.source}
+                  </span>
+
+                  {/* Error indicator */}
+                  {log.error && (
+                    <span className="shrink-0 rounded bg-[rgba(239,68,68,0.1)] px-1.5 py-0.5 font-mono text-[10px] font-bold text-[var(--destructive)]">ERR</span>
+                  )}
+                </button>
+
+                {/* Detail */}
+                {isExpanded && <LogDetail log={log} onOpenInExplorer={() => openLogInExplorer(log, navigate)} />}
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );

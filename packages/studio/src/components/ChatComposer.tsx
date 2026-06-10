@@ -14,6 +14,11 @@ import {
   KeyRound,
   Bug,
   ChevronDown,
+  Wifi,
+  Activity,
+  Globe,
+  Plug,
+  Square,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { AIInputContext, AIInputDropdown } from '#/components/ui/ai-input';
@@ -34,12 +39,17 @@ const API_TOOLS: ChatTool[] = [
   { icon: FlaskConical, label: 'Test endpoint',        prompt: 'Test and validate the endpoint ',     group: 'Testing'  },
   { icon: ShieldAlert,  label: 'Security check',       prompt: 'Check for security issues in ',       group: 'Security' },
   { icon: Bug,          label: 'Debug request',        prompt: 'Help me debug a failing request to ', group: 'Testing'  },
+  { icon: Wifi,         label: 'DNS lookup',           prompt: 'Look up DNS records for hostname: ', group: 'Network'  },
+  { icon: Plug,         label: 'Ping / reach',         prompt: 'Ping and check reachability of host: ', group: 'Network' },
+  { icon: Globe,        label: 'Fetch URL',            prompt: 'Fetch the URL and show the response: ', group: 'Network' },
+  { icon: Activity,     label: 'Recent logs',          prompt: 'Show recent request logs and any errors', group: 'Network' },
 ];
 
 interface ChatComposerProps {
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
+  onStop?: () => void;
   loading?: boolean;
   placeholder?: string;
   tools?: ChatTool[];
@@ -51,6 +61,7 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
     value,
     onChange,
     onSubmit,
+    onStop,
     loading = false,
     placeholder = 'Ask about your API…',
     tools = API_TOOLS,
@@ -93,7 +104,7 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
       <LazyMotion features={domMax}>
         <AIInputContext.Provider value={{ activeDropdown, setActiveDropdown }}>
           <div className={cn('w-full', className)}>
-            <div className="relative rounded-2xl border border-[var(--border)] bg-[var(--card)]">
+            <div className="relative rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-sm transition-shadow focus-within:shadow-md focus-within:border-[var(--border-hover)]">
               {/* Textarea */}
               <div className="px-3 pt-2.5 pb-9">
                 <textarea
@@ -169,10 +180,25 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
                   />
                 </div>
 
-                {/* Right: send button */}
+                {/* Right: send / stop button */}
                 <div className="flex items-center gap-1.5">
                   <AnimatePresence mode="wait" initial={false}>
-                    {hasText ? (
+                    {loading ? (
+                      <m.button
+                        key="stop"
+                        type="button"
+                        onClick={onStop}
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.9 }}
+                        transition={{ duration: 0.12 }}
+                        className="flex items-center gap-1.5 rounded-full px-3 h-[30px] text-[11.5px] font-medium bg-[var(--elevated)] border border-[var(--border)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:border-[var(--border-hover)] transition-colors"
+                        title="Stop generating"
+                      >
+                        <Square className="size-3 fill-current" />
+                        <span>Stop</span>
+                      </m.button>
+                    ) : hasText ? (
                       <m.div
                         key="active"
                         initial={{ opacity: 0, scale: 0.9 }}
@@ -196,11 +222,7 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
                           className="rounded-full bg-[var(--primary)] p-1.5 text-[var(--primary-foreground)] transition-opacity hover:opacity-90 disabled:opacity-40"
                           title="Send (Enter)"
                         >
-                          {loading ? (
-                            <span className="spinner size-3.5" />
-                          ) : (
-                            <ArrowUp className="size-3.5" />
-                          )}
+                          <ArrowUp className="size-3.5" />
                         </button>
                       </m.div>
                     ) : (
@@ -222,9 +244,6 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
               </div>
             </div>
 
-            <p className="mt-1.5 text-center text-[10px] text-[var(--placeholder-foreground)] select-none">
-              Enter to send · Shift+Enter for newline
-            </p>
           </div>
         </AIInputContext.Provider>
       </LazyMotion>
