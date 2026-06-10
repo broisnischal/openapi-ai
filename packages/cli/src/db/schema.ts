@@ -95,4 +95,10 @@ export const SCHEMA = `
     updated_at INTEGER NOT NULL DEFAULT (unixepoch())
   );
   CREATE INDEX IF NOT EXISTS idx_workflows_updated ON workflows(updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS capture_bins (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
 `;

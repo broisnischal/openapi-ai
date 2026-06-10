@@ -510,53 +510,63 @@ function FormDataTable({ rows, onChange, allowFiles }: {
 }
 
 // ── JSON Editor ─────────────────────────────────────────────────────────────
-// ── Shiki singleton — created once, reused forever ────────────────────────
-type Highlighter = Awaited<ReturnType<typeof import('shiki').createHighlighter>>;
-let _shikiPromise: Promise<Highlighter> | null = null;
-function getShiki(): Promise<Highlighter> {
-  if (!_shikiPromise) {
-    _shikiPromise = import('shiki').then(({ createHighlighter }) =>
-      createHighlighter({ themes: ['github-dark-dimmed', 'github-light'], langs: ['json'] })
-    ).catch(e => { _shikiPromise = null; throw e; });
+// Synchronous tokenizer — no async, no debounce, no flash.
+// Uses existing .json-key / .json-str / .json-num / .json-bool / .json-null
+// CSS classes so colors follow the active theme automatically.
+function highlightJson(src: string): string {
+  if (!src.trim()) return '';
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // Groups: string · number · keyword · punctuation · whitespace · other
+  const TOKEN = /("(?:[^"\\]|\\.)*"?)|(-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)|(true|false|null)|([{}\[\],:])|(\s+)|(.)/g;
+  const stack: ('obj' | 'arr')[] = [];
+  let expectKey = false;
+  let out = '';
+  let m: RegExpExecArray | null;
+  while ((m = TOKEN.exec(src)) !== null) {
+    const [, str, num, kw, punc, ws, other] = m;
+    if (ws !== undefined) {
+      out += esc(ws);
+    } else if (str !== undefined) {
+      out += `<span class="${expectKey ? 'json-key' : 'json-str'}">${esc(str)}</span>`;
+      if (expectKey) expectKey = false;
+    } else if (num !== undefined) {
+      out += `<span class="json-num">${esc(num)}</span>`;
+    } else if (kw !== undefined) {
+      out += `<span class="${kw === 'null' ? 'json-null' : 'json-bool'}">${esc(kw)}</span>`;
+    } else if (punc !== undefined) {
+      out += esc(punc);
+      if (punc === '{') { stack.push('obj'); expectKey = true; }
+      else if (punc === '[') { stack.push('arr'); expectKey = false; }
+      else if (punc === '}' || punc === ']') { stack.pop(); expectKey = false; }
+      else if (punc === ':') { expectKey = false; }
+      else if (punc === ',') { expectKey = stack[stack.length - 1] === 'obj'; }
+    } else if (other !== undefined) {
+      out += `<span style="color:var(--destructive)">${esc(other)}</span>`;
+    }
   }
-  return _shikiPromise;
+  return out;
 }
+
+const JSON_PRE_STYLE = "margin:0;padding:12px 16px;font-family:'JetBrains Mono',GeistMono,ui-monospace,monospace;font-size:12.5px;line-height:1.65;white-space:pre-wrap;word-break:break-all;overflow:auto;color:var(--foreground)";
 
 const JsonEditor = React.memo(function JsonEditor({ value, onChange, placeholder }: {
   value: string; onChange: (v: string) => void; placeholder?: string;
 }) {
-  const { theme } = useApp();
-  // local state so typing never triggers a parent re-render mid-keystroke
   const [local, setLocal] = useState(value);
-  const [html, setHtml] = useState('');
   const taRef = useRef<HTMLTextAreaElement>(null);
   const hlRef = useRef<HTMLDivElement>(null);
-  const hlTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
-  // sync from parent only when the value changes from outside (e.g. loading an endpoint)
+  // sync from parent only when value changes from outside (e.g. loading an endpoint)
   const prevValue = useRef(value);
   if (value !== prevValue.current && value !== local) {
     prevValue.current = value;
     setLocal(value);
   }
 
-  // debounced Shiki highlight — runs 400ms after the last keystroke
-  useEffect(() => {
-    if (hlTimer.current) clearTimeout(hlTimer.current);
-    if (!local.trim()) { setHtml(''); return; }
-    hlTimer.current = setTimeout(() => {
-      getShiki().then(hl => {
-        const highlighted = hl.codeToHtml(local, {
-          lang: 'json',
-          theme: theme === 'light' ? 'github-light' : 'github-dark-dimmed',
-        });
-        setHtml(highlighted);
-      }).catch(() => setHtml(''));
-    }, 400);
-    return () => { if (hlTimer.current) clearTimeout(hlTimer.current); };
-  }, [local, theme]);
+  // Synchronous highlight — always current, no debounce, no flash
+  const highlighted = useMemo(() => highlightJson(local), [local]);
 
   const syncScroll = () => {
     if (taRef.current && hlRef.current) {
@@ -579,6 +589,8 @@ const JsonEditor = React.memo(function JsonEditor({ value, onChange, placeholder
     } catch { /**/ }
   };
 
+  const escPh = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[var(--border)] bg-[var(--card)] flex-shrink-0">
@@ -588,9 +600,11 @@ const JsonEditor = React.memo(function JsonEditor({ value, onChange, placeholder
       <div className="relative flex-1 overflow-hidden">
         <div
           ref={hlRef}
-          className="shiki-wrap pointer-events-none absolute inset-0 overflow-hidden"
+          className="pointer-events-none absolute inset-0 overflow-hidden flex flex-col"
           dangerouslySetInnerHTML={{
-            __html: html || `<pre style="margin:0;padding:12px 16px;font-family:GeistMono,monospace;font-size:12.5px;line-height:1.65;color:var(--placeholder-foreground)">${placeholder ?? ''}</pre>`,
+            __html: highlighted
+              ? `<pre style="${JSON_PRE_STYLE}">${highlighted}</pre>`
+              : `<pre style="${JSON_PRE_STYLE};color:var(--placeholder-foreground)">${escPh(placeholder ?? '')}</pre>`,
           }}
         />
         <textarea
@@ -602,14 +616,16 @@ const JsonEditor = React.memo(function JsonEditor({ value, onChange, placeholder
           style={{
             position: 'absolute', inset: 0, width: '100%', height: '100%',
             background: 'transparent',
-            color: html ? 'transparent' : 'var(--foreground)',
+            color: 'transparent',
             caretColor: 'var(--foreground)',
             border: 'none', outline: 'none', resize: 'none',
             padding: '12px 16px',
-            fontFamily: 'GeistMono, ui-monospace, monospace',
-            fontSize: 12.5, lineHeight: 1.65, zIndex: 1,
+            fontFamily: "'JetBrains Mono', GeistMono, ui-monospace, monospace",
+            fontSize: 12.5, lineHeight: 1.65,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+            zIndex: 1,
           }}
-          placeholder={placeholder}
         />
       </div>
     </div>

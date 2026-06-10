@@ -5,6 +5,7 @@ import { join, dirname } from 'path';
 import { mkdirSync } from 'fs';
 import { mcpHandler } from '../mcp/server';
 import { proxyHandler } from '../proxy/handler';
+import { captureHandler } from '../proxy/capture';
 import { apiRouter } from '../api/routes';
 import { logsUpgradeHandler, logsWebSocketHandlers, logBus } from '../logs/bus';
 import { db, dbQueries } from '../db/index';
@@ -158,6 +159,9 @@ export async function run(overrideOpts?: StartOptions) {
         if (req.method === 'OPTIONS') {
           return new Response(null, { status: 204, headers: CORS_HEADERS });
         }
+
+        // Capture bins are public — external clients have no token, the bin ID is the auth
+        if (pathname.startsWith('/c/')) return captureHandler(req);
 
         // Access-token gate (only when --token / WASPER_TOKEN is set)
         if (!isAuthorized(req)) {

@@ -69,6 +69,10 @@ export async function apiRouter(req: Request): Promise<Response> {
   if (path.startsWith('/api/workflows/') && method === 'PUT') return handleUpdateWorkflow(req, path);
   if (path.startsWith('/api/workflows/') && method === 'DELETE') return handleDeleteWorkflow(path);
 
+  if (path === '/api/capture/bins' && method === 'GET') return handleGetCaptureBins();
+  if (path === '/api/capture/bins' && method === 'POST') return handleCreateCaptureBin(req);
+  if (path.startsWith('/api/capture/bins/') && method === 'DELETE') return handleDeleteCaptureBin(path);
+
   return notFound('API route not found');
 }
 
@@ -1510,4 +1514,24 @@ function handleRunWorkflow(path: string): Response {
   return new Response(readable, {
     headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', ...CORS },
   });
+}
+
+// ── Capture bins ─────────────────────────────────────────────────────────────
+function handleGetCaptureBins(): Response {
+  return json(dbQueries.getCaptureBins());
+}
+
+async function handleCreateCaptureBin(req: Request): Promise<Response> {
+  const body = await req.json().catch(() => ({})) as { name?: string };
+  // Short 8-char hex ID — readable in a URL
+  const id = randomUUID().replace(/-/g, '').slice(0, 8);
+  const name = String(body.name ?? '').trim() || 'Untitled bin';
+  dbQueries.insertCaptureBin(id, name);
+  return json({ id, name, created_at: Math.floor(Date.now() / 1000) }, 201);
+}
+
+function handleDeleteCaptureBin(path: string): Response {
+  const id = path.replace('/api/capture/bins/', '');
+  dbQueries.deleteCaptureBin(id);
+  return json({ ok: true });
 }

@@ -90,6 +90,12 @@ export interface SavedRequestRow {
   updated_at: number;
 }
 
+export interface CaptureBinRow {
+  id: string;
+  name: string;
+  created_at: number;
+}
+
 export interface WorkflowRow {
   id: string;
   name: string;
@@ -296,6 +302,21 @@ export const dbQueries = {
 
   deleteWorkflow: (id: string) =>
     db.query('DELETE FROM workflows WHERE id = ?').run(id),
+
+  // ── Capture bins ───────────────────────────────────────────────────────────
+  getCaptureBins: (): CaptureBinRow[] =>
+    db.query('SELECT * FROM capture_bins ORDER BY created_at DESC').all() as CaptureBinRow[],
+
+  getCaptureBin: (id: string): CaptureBinRow | null =>
+    db.query('SELECT * FROM capture_bins WHERE id = ?').get(id) as CaptureBinRow | null,
+
+  insertCaptureBin: (id: string, name: string): void => {
+    db.query('INSERT INTO capture_bins (id, name) VALUES (?, ?)').run(id, name);
+  },
+
+  deleteCaptureBin: (id: string): void => {
+    db.query('DELETE FROM capture_bins WHERE id = ?').run(id);
+  },
 
   // ── Generic key-value settings ──────────────────────────────────────────────
   getSetting: (key: string): string | null =>

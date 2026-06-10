@@ -2,8 +2,10 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { apiClient } from '../lib/api';
 import { useApp } from '../context';
-import { Trash2, Pause, Play, Terminal, Copy, Check, ExternalLink, ChevronDown, ChevronRight } from 'lucide-react';
+import { Trash2, Pause, Play, Terminal, Copy, Check, ExternalLink, ChevronDown, ChevronRight, Radio, Plus, X } from 'lucide-react';
 import { cn } from '../lib/utils';
+
+interface CaptureBin { id: string; name: string; created_at: number; }
 
 export const Route = createFileRoute('/logs')({ component: LogsPage });
 
@@ -140,10 +142,12 @@ function LogsPage() {
   const { wsConnected } = useApp();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [paused, setPaused] = useState(false);
-  const [filter, setFilter] = useState<'all' | 'mcp' | 'explorer' | 'error'>('all');
+  const [filter, setFilter] = useState<'all' | 'mcp' | 'explorer' | 'capture' | 'error'>('all');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [bins, setBins] = useState<CaptureBin[]>([]);
+  const [binsOpen, setBinsOpen] = useState(false);
   const pausedRef = useRef(false);
 
   useEffect(() => { pausedRef.current = paused; }, [paused]);
@@ -156,6 +160,7 @@ function LogsPage() {
         return [...prev, ...fresh].slice(0, 500);
       });
     }).catch(() => {});
+    apiClient<CaptureBin[]>('/api/capture/bins').then(setBins).catch(() => {});
     const handler = (e: Event) => {
       if (pausedRef.current) return;
       const m = (e as CustomEvent<LogEntry>).detail;
@@ -170,6 +175,20 @@ function LogsPage() {
 
   const clear = async () => { await apiClient('/api/logs', { method: 'DELETE' }); setLogs([]); };
 
+  const createBin = async () => {
+    const name = prompt('Bin name (optional):') ?? '';
+    const bin = await apiClient<CaptureBin>('/api/capture/bins', { method: 'POST', body: JSON.stringify({ name }) });
+    setBins(prev => [bin, ...prev]);
+    setBinsOpen(true);
+  };
+
+  const deleteBin = async (id: string) => {
+    await apiClient(`/api/capture/bins/${id}`, { method: 'DELETE' });
+    setBins(prev => prev.filter(b => b.id !== id));
+  };
+
+  const binUrl = (id: string) => `${window.location.origin}/c/${id}`;
+
   const toggle = (id: string) => setExpanded(p => {
     const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n;
   });
@@ -183,11 +202,12 @@ function LogsPage() {
   const filtered = logs.filter(l => {
     if (filter === 'mcp') return l.source === 'mcp';
     if (filter === 'explorer') return l.source === 'explorer';
+    if (filter === 'capture') return l.source === 'capture';
     if (filter === 'error') return !!(l.error || (l.status_code !== null && l.status_code >= 400));
     return true;
   });
 
-  const FILTERS = ['all', 'mcp', 'explorer', 'error'] as const;
+  const FILTERS = ['all', 'mcp', 'explorer', 'capture', 'error'] as const;
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-[var(--background)]">
@@ -260,6 +280,11 @@ function LogsPage() {
 
         {/* Actions */}
         <div className="ml-auto flex items-center gap-2">
+          <button type="button" onClick={createBin}
+            className="flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2.5 py-1.5 text-[11.5px] text-[var(--foreground-secondary)] transition-colors hover:border-[var(--border-hover)] hover:text-[var(--foreground)]"
+            title="Create a public URL — any HTTP request to it is captured here">
+            <Radio size={11} /> New capture URL
+          </button>
           <button type="button" onClick={() => setPaused(p => !p)}
             className="flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2.5 py-1.5 text-[11.5px] text-[var(--foreground-secondary)] transition-colors hover:border-[var(--border-hover)] hover:text-[var(--foreground)]">
             {paused ? <><Play size={11} /> Resume</> : <><Pause size={11} /> Pause</>}
@@ -270,6 +295,57 @@ function LogsPage() {
           </button>
         </div>
       </header>
+
+      {/* Capture bins panel */}
+      {bins.length > 0 && (
+        <div className="shrink-0 border-b border-[var(--border)] bg-[var(--card)]">
+          <button
+            type="button"
+            onClick={() => setBinsOpen(v => !v)}
+            className="flex w-full items-center gap-2 px-4 py-2 text-left text-[11.5px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+          >
+            <Radio size={11} className="text-[var(--accent)] shrink-0" />
+            <span className="font-medium">Capture URLs</span>
+            <span className="rounded bg-[var(--elevated)] px-1.5 py-0.5 text-[10px]">{bins.length}</span>
+            <span className="ml-auto text-[10.5px] text-[var(--placeholder-foreground)]">{binsOpen ? 'hide' : 'show'}</span>
+          </button>
+          {binsOpen && (
+            <div className="flex flex-col gap-1.5 px-4 pb-3">
+              {bins.map(bin => (
+                <div key={bin.id} className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2">
+                  <Radio size={10} className="shrink-0 text-[var(--accent)]" />
+                  <span className="text-[12px] font-medium text-[var(--foreground)] shrink-0">{bin.name}</span>
+                  <code className="flex-1 overflow-hidden truncate font-mono text-[11px] text-[var(--muted-foreground)]">
+                    {binUrl(bin.id)}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => { copy(binUrl(bin.id), `bin-${bin.id}`); }}
+                    className="flex shrink-0 items-center gap-1 rounded border border-[var(--border)] px-2 py-1 text-[10.5px] text-[var(--muted-foreground)] hover:border-[var(--border-hover)] hover:text-[var(--foreground)] transition-colors"
+                  >
+                    {copied === `bin-${bin.id}` ? <><Check size={10} /> Copied</> : <><Copy size={10} /> Copy URL</>}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteBin(bin.id)}
+                    className="shrink-0 rounded p-1 text-[var(--placeholder-foreground)] hover:text-[var(--destructive)] transition-colors"
+                    title="Delete bin"
+                  >
+                    <X size={11} />
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={createBin}
+                className="flex items-center gap-1.5 self-start rounded border border-dashed border-[var(--border)] px-3 py-1.5 text-[11px] text-[var(--placeholder-foreground)] hover:border-[var(--border-hover)] hover:text-[var(--foreground)] transition-colors"
+              >
+                <Plus size={10} /> New bin
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Log list */}
       <div className="flex-1 overflow-y-auto">
@@ -331,7 +407,12 @@ function LogsPage() {
                   )}
 
                   {/* Source */}
-                  <span className="shrink-0 rounded bg-[var(--elevated)] px-1.5 py-0.5 text-[10px] text-[var(--muted-foreground)]">
+                  <span className={cn(
+                    'shrink-0 rounded px-1.5 py-0.5 text-[10px]',
+                    log.source === 'capture'
+                      ? 'bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-[var(--accent)] font-medium'
+                      : 'bg-[var(--elevated)] text-[var(--muted-foreground)]',
+                  )}>
                     {log.source}
                   </span>
 
