@@ -1,9 +1,11 @@
-import { getState } from '../state';
+import { getState, hasState } from '../state';
 import { dbQueries, randomUUID } from '../db/index';
 import { logBus } from '../logs/bus';
 import { applyAuth } from '../auth/engine';
 import type { AuthConfig } from '../auth/engine';
 import type { ParsedOperation } from '../openapi/types';
+import { getFeatures, readonlyViolation } from '../config';
+import { VERSION } from '../version';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -12,7 +14,7 @@ const CORS = {
 };
 
 const PROTOCOL_VERSION = '2024-11-05';
-const SERVER_INFO = { name: 'openapi-agent', version: '0.1.0' };
+const SERVER_INFO = { name: 'wasper', version: VERSION };
 
 interface JsonRpcRequest {
   jsonrpc: '2.0';
@@ -96,6 +98,11 @@ const TOOLS = [
           description: 'Extra request headers',
         },
         body: { description: 'Request body for POST/PUT/PATCH requests' },
+        authProfile: {
+          type: 'string',
+          description:
+            'Optional: name or ID of a saved auth profile (role) to use for THIS request only, without changing the globally active one. Use list_auth_profiles to see available roles.',
+        },
       },
       required: ['operationId'],
     },
@@ -122,6 +129,35 @@ const TOOLS = [
     },
   },
 ];
+
+// Shown to every connecting agent on initialize — tells it what API it is
+// talking to, which auth roles exist, and any guardrails currently active.
+function buildInstructions(): string {
+  const lines: string[] = [];
+
+  if (hasState()) {
+    const { spec, operations } = getState();
+    lines.push(`This server exposes the "${spec.title}" API (v${spec.version}) — ${operations.length} endpoints. Use search_endpoints to discover them, get_endpoint_schema for details, and execute_api_request to call them.`);
+  } else {
+    lines.push('No OpenAPI spec is currently loaded — endpoint tools will return empty results until the operator loads one.');
+  }
+
+  const profiles = dbQueries.getProfiles();
+  if (profiles.length > 0) {
+    const roleList = profiles
+      .map(p => `"${p.name}" (${p.type}${p.is_active === 1 ? ', currently active' : ''})${p.description ? ` — ${p.description}` : ''}`)
+      .join('; ');
+    lines.push(`Auth roles available: ${roleList}. Requests use the active role by default. To act as a different role, either pass authProfile to execute_api_request (per-request, does not affect other agents) or call set_active_auth (global).`);
+  } else {
+    lines.push('No auth roles are saved; requests go out with the current auth config (see get_active_auth).');
+  }
+
+  if (getFeatures().readonly) {
+    lines.push('GUARDRAIL: the server is in read-only mode — POST/PUT/PATCH/DELETE requests will be rejected.');
+  }
+
+  return lines.join('\n\n');
+}
 
 export async function mcpHandler(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
@@ -156,7 +192,12 @@ async function dispatch(req: JsonRpcRequest): Promise<JsonRpcResponse | null> {
   const id = req.id ?? null;
   switch (req.method) {
     case 'initialize':
-      return ok(id, { protocolVersion: PROTOCOL_VERSION, capabilities: { tools: {} }, serverInfo: SERVER_INFO });
+      return ok(id, {
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities: { tools: {} },
+        serverInfo: SERVER_INFO,
+        instructions: buildInstructions(),
+      });
     case 'notifications/initialized':
     case 'notifications/cancelled':
       return null;
@@ -330,6 +371,11 @@ async function executeOperation(
   const extraHeaders = (args.headers as Record<string, string>) ?? {};
   const body = args.body;
 
+  const blocked = readonlyViolation(op.method);
+  if (blocked) {
+    return { content: [{ type: 'text', text: blocked }], isError: true };
+  }
+
   let urlPath = op.path;
   for (const [k, v] of Object.entries(pathParams)) {
     urlPath = urlPath.replace(`{${k}}`, encodeURIComponent(String(v)));
@@ -353,8 +399,26 @@ async function executeOperation(
   const urlObj = new URL(`${resolvedBase.replace(/\/$/, '')}${urlPath.startsWith('/') ? urlPath : `/${urlPath}`}`);
   for (const [k, v] of Object.entries(queryParams)) urlObj.searchParams.set(k, String(v));
 
-  const authRow = dbQueries.getAuthConfig();
-  const authConfig = authRow ? JSON.parse(authRow.config) : { type: 'none' };
+  // Per-request auth role: authProfile overrides the globally active config
+  // for this call only, so concurrent agents can act as different roles.
+  let authConfig: AuthConfig;
+  const requestedRole = args.authProfile ? String(args.authProfile) : null;
+  if (requestedRole) {
+    const profiles = dbQueries.getProfiles();
+    const profile = profiles.find(p => p.id === requestedRole)
+      ?? profiles.find(p => p.name.toLowerCase() === requestedRole.toLowerCase());
+    if (!profile) {
+      const names = profiles.map(p => p.name).join(', ') || 'none saved';
+      return {
+        content: [{ type: 'text', text: `Auth profile not found: "${requestedRole}". Available roles: ${names}` }],
+        isError: true,
+      };
+    }
+    authConfig = JSON.parse(profile.config) as AuthConfig;
+  } else {
+    const authRow = dbQueries.getAuthConfig();
+    authConfig = authRow ? (JSON.parse(authRow.config) as AuthConfig) : { type: 'none' };
+  }
   const { url: authedUrl, headers: authedHeaders } = await applyAuth(urlObj.toString(), extraHeaders, authConfig);
 
   const reqBody = body !== undefined ? (typeof body === 'string' ? body : JSON.stringify(body)) : null;

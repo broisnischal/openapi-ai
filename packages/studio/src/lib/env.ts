@@ -1,7 +1,11 @@
 import { dbPut, dbGetAll, dbDel } from './storage';
 
 export interface EnvVar { key: string; value: string; enabled: boolean; }
-export interface Environment { id: string; name: string; color: string; vars: EnvVar[]; }
+export interface Environment {
+  id: string; name: string; color: string; vars: EnvVar[];
+  /** Default headers applied to every request sent with this environment. */
+  headers?: EnvVar[];
+}
 
 const STORE = 'environments';
 const LS_ACTIVE = 'env_active_id';
@@ -17,11 +21,30 @@ export function listEnvironments(): Promise<Environment[]> { return dbGetAll<Env
 export function saveEnvironment(e: Environment): Promise<void> { return dbPut(STORE, e); }
 export function deleteEnvironment(id: string): Promise<void> { return dbDel(STORE, id); }
 
+// Built-in dynamic variables — evaluated fresh on each resolve call
+const DYNAMIC_VARS: Record<string, () => string> = {
+  '$guid':          () => crypto.randomUUID(),
+  '$timestamp':     () => String(Math.floor(Date.now() / 1000)),
+  '$isoTimestamp':  () => new Date().toISOString(),
+  '$randomInt':     () => String(Math.floor(Math.random() * 1000)),
+  '$randomFloat':   () => (Math.random() * 100).toFixed(4),
+  '$randomString':  () => Math.random().toString(36).slice(2, 10),
+  '$randomBoolean': () => String(Math.random() > 0.5),
+  '$randomEmail':   () => `user${Math.floor(Math.random() * 9999)}@example.com`,
+};
+
+export const DYNAMIC_VAR_NAMES = Object.keys(DYNAMIC_VARS);
+
 export function resolveVars(text: string, env: Environment | null): string {
-  if (!env) return text;
+  if (!text) return text;
   let out = text;
-  for (const v of env.vars) {
-    if (v.enabled && v.key) out = out.replaceAll(`{{${v.key}}}`, v.value);
+  for (const [key, fn] of Object.entries(DYNAMIC_VARS)) {
+    if (out.includes(`{{${key}}}`)) out = out.replaceAll(`{{${key}}}`, fn());
+  }
+  if (env) {
+    for (const v of env.vars) {
+      if (v.enabled && v.key) out = out.replaceAll(`{{${v.key}}}`, v.value);
+    }
   }
   return out;
 }

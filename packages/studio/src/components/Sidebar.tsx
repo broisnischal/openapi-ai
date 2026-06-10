@@ -6,8 +6,8 @@ import { cacheGet, cacheSet } from '../lib/cache';
 import { cn } from '../lib/utils';
 import {
   LayoutGrid, Terminal, Activity, Key, Settings, Bot,
-  Sun, Moon, BookOpen, ExternalLink, Search, ArrowRightLeft,
-  ChevronLeft, ChevronRight, Layers, Keyboard,
+  Sun, Moon, Search, ArrowRightLeft,
+  ChevronLeft, ChevronRight, ChevronDown, Layers, Keyboard, BugPlay,
 } from 'lucide-react';
 
 interface Status { spec: { title: string; version: string }; endpointCount: number; }
@@ -16,6 +16,7 @@ const MAIN_NAV = [
   { to: '/',          icon: LayoutGrid,     label: 'Overview',       exact: true  },
   { to: '/explorer',  icon: Terminal,       label: 'Explorer',       exact: false },
   { to: '/ai',        icon: Bot,            label: 'AI Chat',        exact: false },
+  { to: '/console',   icon: BugPlay,        label: 'Console',        exact: false },
   { to: '/intercept', icon: ArrowRightLeft, label: 'Intercept',      exact: false },
   { to: '/logs',      icon: Activity,       label: 'Logs',           exact: false },
 ] as const;
@@ -33,20 +34,42 @@ function NavItem({ to, icon: Icon, label, exact, collapsed }: {
 }) {
   const pathname = useRouterState({ select: s => s.location.pathname });
   const active = exact ? pathname === to : pathname === to || pathname.startsWith(to + '/');
+
+  if (collapsed) {
+    return (
+      <Link
+        to={to as '/'}
+        title={label}
+        className={cn(
+          'relative flex items-center justify-center w-9 h-9 mx-auto rounded-lg transition-colors duration-100 no-underline',
+          active
+            ? 'text-[var(--foreground)] bg-[color-mix(in_srgb,var(--foreground)_9%,transparent)]'
+            : 'text-[var(--muted-foreground)] hover:text-[var(--foreground-secondary)] hover:bg-[color-mix(in_srgb,var(--foreground)_6%,transparent)]',
+        )}
+      >
+        {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 h-4 w-[2.5px] rounded-full bg-[var(--accent)]" />}
+        <Icon size={16} strokeWidth={active ? 2.2 : 1.8} className="flex-shrink-0 text-inherit" />
+      </Link>
+    );
+  }
+
   return (
     <Link
       to={to as '/'}
-      title={collapsed ? label : undefined}
       className={cn(
-        'flex items-center gap-2.5 px-2.5 h-8 rounded-md w-full text-[13.5px] tracking-tight transition-colors duration-100 no-underline',
-        collapsed && 'justify-center px-0',
+        'relative flex items-center gap-2.5 pl-3 pr-2.5 h-8 rounded-lg w-full text-[13.5px] tracking-tight transition-colors duration-100 no-underline',
         active
-          ? 'text-[var(--primary)] font-medium bg-[var(--primary-dim)]'
+          ? 'text-[var(--foreground)] font-medium bg-[color-mix(in_srgb,var(--foreground)_9%,transparent)]'
           : 'text-[var(--muted-foreground)] hover:text-[var(--foreground-secondary)] hover:bg-[color-mix(in_srgb,var(--foreground)_6%,transparent)]',
       )}
     >
-      <Icon size={15} strokeWidth={active ? 2.1 : 1.7} className="flex-shrink-0 text-inherit" />
-      {!collapsed && label}
+      {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 h-4 w-[2.5px] rounded-full bg-[var(--accent)]" />}
+      <Icon
+        size={16}
+        strokeWidth={active ? 2.2 : 1.8}
+        className={cn('flex-shrink-0', active ? 'text-[var(--accent)]' : 'text-inherit')}
+      />
+      {label}
     </Link>
   );
 }
@@ -84,13 +107,13 @@ export function Sidebar() {
         <span
           className="w-2 h-2 rounded-full flex-shrink-0 transition-colors duration-300"
           style={{
-            background: connected ? 'var(--primary)' : 'var(--muted-foreground)',
-            boxShadow: connected ? '0 0 6px rgba(34,197,94,0.5)' : 'none',
+            background: connected ? 'var(--success)' : 'var(--muted-foreground)',
+            boxShadow: connected ? '0 0 6px rgba(34,197,94,0.4)' : 'none',
           }}
         />
         {!collapsed && (
           <span className="text-[13.5px] font-semibold tracking-tight text-[var(--foreground)] truncate flex-1 leading-none">
-            {status?.spec.title ?? 'OpenAPI Agent'}
+            {status?.spec.title ?? 'Wasper'}
           </span>
         )}
       </div>
@@ -109,30 +132,30 @@ export function Sidebar() {
         </div>
       )}
       {collapsed && (
-        <div className="pt-2 px-1.5 flex-shrink-0">
+        <div className="pt-2 flex-shrink-0 flex justify-center">
           <button
             onClick={() => setCmdOpen(true)}
             title="Search (⌘K)"
-            className="w-full flex items-center justify-center h-8 rounded-lg bg-transparent border border-[var(--border)] text-[var(--placeholder-foreground)] hover:border-[var(--border-hover)] hover:text-[var(--muted-foreground)] transition-colors cursor-pointer"
+            className="w-8 h-8 flex items-center justify-center rounded-md bg-transparent border-0 text-[var(--muted-foreground)] hover:bg-[color-mix(in_srgb,var(--foreground)_6%,transparent)] hover:text-[var(--foreground-secondary)] transition-colors cursor-pointer"
           >
-            <Search size={13} />
+            <Search size={14} />
           </button>
         </div>
       )}
 
       {/* Main nav */}
-      <nav className={cn('pt-1 flex flex-col gap-0.5 flex-shrink-0', collapsed ? 'px-1.5' : 'px-2.5')}>
+      <nav className={cn('pt-1 flex flex-col gap-0.5 flex-shrink-0', collapsed ? 'px-1' : 'px-2.5')}>
         {MAIN_NAV.map(item => <NavItem key={item.to} {...item} collapsed={collapsed} />)}
       </nav>
 
       {/* Config section */}
-      <div className={cn('mt-2 flex-shrink-0', collapsed ? 'px-1.5' : 'px-2.5')}>
+      <div className={cn('mt-2 flex-shrink-0', collapsed ? 'px-1' : 'px-2.5')}>
         {!collapsed && (
           <div className="px-1 py-1.5 text-[11px] font-semibold tracking-widest uppercase text-[var(--placeholder-foreground)]">
             Configuration
           </div>
         )}
-        {collapsed && <div className="h-[1px] bg-[var(--border)] mx-1 mb-1" />}
+        {collapsed && <div className="h-[1px] bg-[var(--border)] mx-2 mb-1" />}
         <div className="flex flex-col gap-0.5">
           {CONFIG_NAV.map(item => <NavItem key={item.to} {...item} collapsed={collapsed} />)}
         </div>
@@ -155,39 +178,30 @@ export function Sidebar() {
               />
             </div>
           ) : (
-            <select
-              className="w-full text-[11.5px] bg-transparent border-0 outline-none cursor-pointer text-[var(--muted-foreground)] font-sans py-1 pr-1"
-              value={activeEnvId ?? ''}
-              onChange={e => setActiveEnvId(e.target.value || null)}
-            >
-              <option value="">No environment</option>
-              {envs.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-            </select>
+            <div className="relative flex items-center gap-2 h-8 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] hover:border-[var(--border-hover)] transition-colors">
+              <span
+                className="w-2 h-2 rounded-full flex-shrink-0"
+                style={{ background: activeEnv?.color ?? 'var(--placeholder-foreground)' }}
+              />
+              <select
+                className="flex-1 min-w-0 text-[12px] bg-transparent border-0 outline-none cursor-pointer text-[var(--foreground-secondary)] font-sans appearance-none pr-4"
+                value={activeEnvId ?? ''}
+                onChange={e => setActiveEnvId(e.target.value || null)}
+              >
+                <option value="">No environment</option>
+                {envs.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+              </select>
+              <ChevronDown size={12} className="absolute right-2.5 text-[var(--muted-foreground)] pointer-events-none" />
+            </div>
           )}
         </div>
       )}
 
-      {/* Docs link */}
-      {!collapsed && (
-        <div className="px-2.5 border-t border-[var(--border)]">
-          <a
-            href="https://modelcontextprotocol.io"
-            target="_blank"
-            rel="noopener noreferrer"
-            className={cn(
-              'flex items-center gap-2.5 px-2.5 h-8 rounded-md w-full text-[13.5px] tracking-tight transition-colors duration-100 no-underline',
-              'text-[var(--muted-foreground)] hover:text-[var(--foreground-secondary)] hover:bg-[color-mix(in_srgb,var(--foreground)_6%,transparent)]',
-            )}
-          >
-            <BookOpen size={15} strokeWidth={1.7} className="flex-shrink-0" />
-            Documentation
-            <ExternalLink size={11} className="ml-auto opacity-40" />
-          </a>
-        </div>
-      )}
-
       {/* Footer */}
-      <div className={cn('flex items-center gap-1.5 py-3 border-t border-[var(--border)] flex-shrink-0', collapsed ? 'px-1.5 flex-col gap-1.5' : 'px-4')}>
+      <div className={cn(
+        'border-t border-[var(--border)] flex-shrink-0',
+        collapsed ? 'flex flex-col items-center gap-1 py-3' : 'flex items-center gap-1.5 px-4 py-3',
+      )}>
         {!collapsed && (
           <span className="text-[12px] text-[var(--muted-foreground)] flex-1 truncate">
             {connected
@@ -198,21 +212,21 @@ export function Sidebar() {
         <button
           onClick={toggleTheme}
           title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode (Mod+Shift+D)`}
-          className="flex items-center justify-center w-[26px] h-[26px] rounded-md bg-transparent border border-[var(--border)] text-[var(--muted-foreground)] cursor-pointer flex-shrink-0 hover:border-[var(--border-hover)] hover:text-[var(--foreground)] transition-colors"
+          className="flex items-center justify-center w-7 h-7 rounded-md bg-transparent border-0 text-[var(--muted-foreground)] cursor-pointer flex-shrink-0 hover:bg-[color-mix(in_srgb,var(--foreground)_7%,transparent)] hover:text-[var(--foreground)] transition-colors"
         >
           {theme === 'dark' ? <Sun size={12} /> : <Moon size={12} />}
         </button>
         <button
           onClick={() => window.dispatchEvent(new CustomEvent('open-hotkey-help'))}
           title="Keyboard shortcuts (?)"
-          className="flex items-center justify-center w-[26px] h-[26px] rounded-md bg-transparent border border-[var(--border)] text-[var(--placeholder-foreground)] cursor-pointer flex-shrink-0 hover:border-[var(--border-hover)] hover:text-[var(--foreground)] transition-colors"
+          className="flex items-center justify-center w-7 h-7 rounded-md bg-transparent border-0 text-[var(--placeholder-foreground)] cursor-pointer flex-shrink-0 hover:bg-[color-mix(in_srgb,var(--foreground)_7%,transparent)] hover:text-[var(--foreground)] transition-colors"
         >
           <Keyboard size={11} />
         </button>
         <button
           onClick={toggleSidebar}
           title={collapsed ? 'Expand sidebar (Mod+B)' : 'Collapse sidebar (Mod+B)'}
-          className="flex items-center justify-center w-[26px] h-[26px] rounded-md bg-transparent border border-[var(--border)] text-[var(--muted-foreground)] cursor-pointer flex-shrink-0 hover:border-[var(--border-hover)] hover:text-[var(--foreground)] transition-colors"
+          className="flex items-center justify-center w-7 h-7 rounded-md bg-transparent border-0 text-[var(--muted-foreground)] cursor-pointer flex-shrink-0 hover:bg-[color-mix(in_srgb,var(--foreground)_7%,transparent)] hover:text-[var(--foreground)] transition-colors"
         >
           {collapsed ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
         </button>

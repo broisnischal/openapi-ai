@@ -1,7 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { apiClient } from '../lib/api';
+import { useApp } from '../context';
+import type { Features } from '../context';
 import { cn } from '../lib/utils';
+import { Switch } from '../components/ui/switch';
 import { Save, Check, Eye, EyeOff } from 'lucide-react';
 
 export const Route = createFileRoute('/settings')({ component: SettingsPage });
@@ -45,27 +48,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className={cn(
-        'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-0 transition-colors duration-200 focus:outline-none',
-        checked ? 'bg-[var(--primary)]' : 'bg-[var(--elevated)]',
-      )}
-    >
-      <span
-        className={cn(
-          'pointer-events-none inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform duration-200 translate-y-[3px]',
-          checked ? 'translate-x-[19px]' : 'translate-x-[3px]',
-        )}
-      />
-    </button>
-  );
-}
+const Toggle = Switch;
 
 function Section({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
   return (
@@ -104,6 +87,7 @@ function PasswordInput({ value, onChange, placeholder }: { value: string; onChan
 }
 
 function SettingsPage() {
+  const { features, setFeatures } = useApp();
   const [s, setS] = useState<Settings>(DEF);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -113,6 +97,20 @@ function SettingsPage() {
       .then(d => setS({ ...DEF, ...d, proxy: { ...DEF.proxy, ...d.proxy }, ai: { ...DEF.ai, ...d.ai }, request: { ...DEF.request, ...d.request } }))
       .catch(() => {});
   }, []);
+
+  const toggleFeature = async (key: keyof Features, value: boolean) => {
+    const next = { ...features, [key]: value };
+    setFeatures(next); // optimistic local update
+    try {
+      const updated = await apiClient<Features>('/api/features', {
+        method: 'PUT',
+        body: JSON.stringify({ [key]: value }),
+      });
+      setFeatures(updated);
+    } catch {
+      setFeatures(features); // revert on error
+    }
+  };
 
   const set = <K extends keyof Settings>(k: K, patch: Partial<Settings[K]>) =>
     setS(prev => ({ ...prev, [k]: { ...prev[k], ...patch } }));
@@ -139,6 +137,24 @@ function SettingsPage() {
       </div>
 
       <div className="px-8 py-6 max-w-[600px] flex flex-col gap-4">
+
+        {/* Server Feature Toggles */}
+        <Section title="Server" desc="Live feature toggles — changes apply instantly and survive restarts.">
+          <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+            <Field label="MCP endpoint" hint="Serve the /mcp JSON-RPC endpoint used by Claude and other agents.">
+              <Toggle checked={features.mcp} onChange={v => toggleFeature('mcp', v)} />
+            </Field>
+            <Field label="HTTP proxy" hint="Route upstream requests through the server proxy.">
+              <Toggle checked={features.proxy} onChange={v => toggleFeature('proxy', v)} />
+            </Field>
+            <Field label="AI chat" hint="Enable the AI assistant in the studio.">
+              <Toggle checked={features.ai} onChange={v => toggleFeature('ai', v)} />
+            </Field>
+            <Field label="Read-only mode" hint="Block all non-GET upstream requests. Resets to off on server restart.">
+              <Toggle checked={features.readonly} onChange={v => toggleFeature('readonly', v)} />
+            </Field>
+          </div>
+        </Section>
 
         {/* AI Provider */}
         <Section title="AI Provider" desc="Powers the AI chat assistant.">

@@ -14,10 +14,12 @@ let _seq = 0;
 const uid = () => `${Date.now()}-${++_seq}`;
 
 const EMPTY_ENV: () => Environment = () => ({
-  id: uid(), name: '', color: ENV_COLORS[0]!, vars: [],
+  id: uid(), name: '', color: ENV_COLORS[0]!, vars: [], headers: [],
 });
 
-function VarTable({ vars, onChange }: { vars: EnvVar[]; onChange: (v: EnvVar[]) => void }) {
+function VarTable({ vars, onChange, ph = ['VARIABLE_NAME', 'value'], labels = ['Variable', 'Value'] }: {
+  vars: EnvVar[]; onChange: (v: EnvVar[]) => void; ph?: [string, string]; labels?: [string, string];
+}) {
   const upd = (i: number, patch: Partial<EnvVar>) => {
     const next = [...vars];
     next[i] = { ...next[i]!, ...patch };
@@ -31,21 +33,21 @@ function VarTable({ vars, onChange }: { vars: EnvVar[]; onChange: (v: EnvVar[]) 
   return (
     <div className="flex flex-col">
       <div className="grid grid-cols-[1fr_1fr_28px] gap-1.5 px-4 pb-1">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--placeholder-foreground)]">Variable</span>
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--placeholder-foreground)]">Value</span>
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--placeholder-foreground)]">{labels[0]}</span>
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--placeholder-foreground)]">{labels[1]}</span>
         <span />
       </div>
       {rows.map((row, i) => (
         <div key={i} className="grid grid-cols-[1fr_1fr_28px] gap-1.5 px-4 py-0.5">
           <input
             className="input h-7 text-[12px] font-mono"
-            placeholder="VARIABLE_NAME"
+            placeholder={ph[0]}
             value={row.key}
             onChange={e => upd(i, { key: e.target.value })}
           />
           <input
             className="input h-7 text-[12px] font-mono"
-            placeholder="value"
+            placeholder={ph[1]}
             value={row.value}
             onChange={e => upd(i, { value: e.target.value })}
           />
@@ -96,6 +98,16 @@ function EnvEditor({ env, onSave, onCancel }: {
 
       <div className="py-3">
         <VarTable vars={draft.vars} onChange={vars => set({ vars })} />
+        <div className="px-4 pt-4 pb-1">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--placeholder-foreground)]">Default headers</span>
+          <span className="ml-2 text-[11px] text-[var(--placeholder-foreground)]">sent with every request using this environment</span>
+        </div>
+        <VarTable
+          vars={draft.headers ?? []}
+          onChange={headers => set({ headers })}
+          ph={['X-Custom-Header', 'value — {{VARS}} work here']}
+          labels={['Header', 'Value']}
+        />
       </div>
 
       <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-[var(--border)]">

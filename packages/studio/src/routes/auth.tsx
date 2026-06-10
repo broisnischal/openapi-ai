@@ -122,11 +122,11 @@ function AuthFields({
 
 function typeBadge(type: string) {
   const colors: Record<string, string> = {
-    none: '#6b7280', bearer: '#6366f1', basic: '#0ea5e9',
-    apikey_header: '#10b981', apikey_query: '#10b981', apikey_cookie: '#10b981',
-    oauth2_cc: '#f59e0b', oidc: '#f59e0b', custom: '#8b5cf6',
+    none: 'var(--muted-foreground)', bearer: 'var(--foreground-secondary)', basic: 'var(--foreground-secondary)',
+    apikey_header: 'var(--success)', apikey_query: 'var(--success)', apikey_cookie: 'var(--success)',
+    oauth2_cc: 'var(--warning)', oidc: 'var(--warning)', custom: 'var(--muted-foreground)',
   };
-  const color = colors[type] ?? '#6b7280';
+  const color = colors[type] ?? 'var(--muted-foreground)';
   const label = AUTH_TYPES.find(a => a.value === type)?.label ?? type;
   return (
     <span style={{ fontSize: 10.5, fontWeight: 600, background: `${color}22`, color, borderRadius: 5, padding: '2px 7px' }}>

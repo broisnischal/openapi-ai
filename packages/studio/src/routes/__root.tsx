@@ -3,8 +3,8 @@ import { useEffect, useState, useRef } from 'react';
 import { Sidebar } from '../components/Sidebar';
 import { CommandPalette } from '../components/CommandPalette';
 import { HotkeyHelp } from '../components/HotkeyHelp';
-import { AppContext, useApp } from '../context';
-import { apiClient, getCliUrl, setCliUrl, clearCliUrl } from '../lib/api';
+import { AppContext, DEFAULT_FEATURES, type Features } from '../context';
+import { apiClient, getCliUrl, setCliUrl, clearCliUrl, getCliToken, setCliToken, clearCliToken, LOG_WS_URL } from '../lib/api';
 import { injectFonts } from '../fonts';
 import {
   listEnvironments, getActiveEnvId, setActiveEnvId as persistActiveEnv,
@@ -17,7 +17,7 @@ export const Route = createRootRoute({
     meta: [
       { charSet: 'utf-8' },
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-      { title: 'OpenAPI Agent Studio' },
+      { title: 'Wasper Studio' },
     ],
     links: [{ rel: 'stylesheet', href: appCss }],
   }),
@@ -50,6 +50,7 @@ Route.update({ component: AppShell });
 function OfflineCard() {
   const currentUrl = getCliUrl();
   const [urlInput, setUrlInput] = useState(currentUrl);
+  const [tokenInput, setTokenInput] = useState(getCliToken() ?? '');
   const [showUrlEdit, setShowUrlEdit] = useState(false);
   const isUnsafeMix = typeof window !== 'undefined'
     && window.location.protocol === 'https:'
@@ -57,8 +58,8 @@ function OfflineCard() {
     && !urlInput.startsWith('http://localhost')
     && !urlInput.startsWith('http://127.0.0.1');
 
-  const save = () => { setCliUrl(urlInput); window.location.reload(); };
-  const reset = () => { clearCliUrl(); window.location.reload(); };
+  const save = () => { setCliUrl(urlInput); setCliToken(tokenInput.trim()); window.location.reload(); };
+  const reset = () => { clearCliUrl(); clearCliToken(); window.location.reload(); };
 
   return (
     <div className="offline-overlay">
@@ -68,7 +69,7 @@ function OfflineCard() {
           <h1 style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-0.04em', color: 'var(--foreground)', lineHeight: 1.25, margin: 0 }}>
             Hey 👋
             <br />
-            Welcome to OpenAPI Agent Studio
+            Welcome to Wasper Studio
           </h1>
           <div style={{ marginTop: 12, fontSize: 14, color: 'var(--muted-foreground)', display: 'flex', alignItems: 'center', gap: 10 }}>
             Connecting to the CLI on{' '}
@@ -95,7 +96,7 @@ function OfflineCard() {
               </svg>
             </div>
             <div style={{ fontSize: 15.5, fontWeight: 700, color: 'var(--foreground)', marginBottom: 12, letterSpacing: '-0.02em' }}>
-              OpenAPI Agent CLI
+              wasper-cli
             </div>
             <div style={{ fontSize: 13.5, color: 'var(--muted-foreground)', marginBottom: 18, lineHeight: 1.6 }}>
               Make sure the CLI is up and running
@@ -106,18 +107,18 @@ function OfflineCard() {
                 fontSize: 12.5, fontFamily: 'GeistMono, monospace',
                 background: 'var(--elevated)', border: '1px solid var(--border)',
                 borderRadius: 6, padding: '6px 11px', display: 'inline-block', color: 'var(--foreground)',
-              }}>npm i -g openapi-agent</code>
+              }}>npm i -g wasper-cli</code>
               <div style={{ marginTop: 2 }}>2. Start the CLI with your spec:</div>
               <code style={{
                 fontSize: 12.5, fontFamily: 'GeistMono, monospace',
                 background: 'var(--elevated)', border: '1px solid var(--border)',
                 borderRadius: 6, padding: '6px 11px', display: 'inline-block', color: 'var(--foreground)',
-              }}>openapi-agent --url &lt;spec-url&gt;</code>
+              }}>wasper --url &lt;spec-url&gt;</code>
             </div>
             <div style={{ marginTop: 22, fontSize: 13.5, color: 'var(--muted-foreground)', lineHeight: 1.7 }}>
               Still experiencing issues?<br />
               <button
-                onClick={() => window.open('https://github.com/broisnischal/openapi-agent/issues', '_blank')}
+                onClick={() => window.open('https://github.com/broisnischal/wasper/issues', '_blank')}
                 style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--primary)', fontSize: 13.5, fontFamily: 'inherit', textDecoration: 'underline', textUnderlineOffset: 2 }}
               >
                 Open an issue on GitHub
@@ -168,6 +169,15 @@ function OfflineCard() {
                   onKeyDown={e => e.key === 'Enter' && save()}
                   style={{ fontFamily: 'GeistMono, monospace', fontSize: 12.5 }}
                 />
+                <input
+                  className="input"
+                  type="password"
+                  value={tokenInput}
+                  onChange={e => setTokenInput(e.target.value)}
+                  placeholder="Access token (optional — for --token servers)"
+                  onKeyDown={e => e.key === 'Enter' && save()}
+                  style={{ fontFamily: 'GeistMono, monospace', fontSize: 12.5 }}
+                />
                 {isUnsafeMix && (
                   <div style={{ fontSize: 12, color: 'var(--warning)', lineHeight: 1.5 }}>
                     ⚠ Browsers block HTTP→non-localhost from HTTPS pages. Use <strong>https://</strong> or <strong>localhost</strong>.
@@ -188,7 +198,7 @@ function OfflineCard() {
                 background: 'var(--elevated)', border: '1px solid var(--border)',
                 borderRadius: 6, padding: '6px 11px', display: 'inline-block',
                 color: 'var(--foreground)',
-              }}>openapi-agent --port 4000</code>
+              }}>wasper --port 4000</code>
               <div>2. Enter the URL above and click Connect</div>
             </div>
           </div>
@@ -214,6 +224,10 @@ function AppShell() {
   const [envs, setEnvs] = useState<Environment[]>([]);
   const [activeEnvId, setActiveEnvIdState] = useState<string | null>(() => getActiveEnvId());
   const [HotkeysLayer, setHotkeysLayer] = useState<typeof import('../components/HotkeysLayer').HotkeysLayer | null>(null);
+  const [features, setFeaturesState] = useState<Features>(DEFAULT_FEATURES);
+  const [wsConnected, setWsConnected] = useState(false);
+  const wsRef = useRef<WebSocket | null>(null);
+  const wsRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const toggleSidebar = () => setSidebarCollapsed(v => {
     const next = !v;
@@ -272,6 +286,54 @@ function AppShell() {
     apiClient<ParsedOp[]>('/api/spec/endpoints').then(setOperations).catch(() => {});
   }, [connected]);
 
+  // Global WebSocket — shared across pages for live features/logs
+  useEffect(() => {
+    if (!connected) {
+      wsRef.current?.close();
+      wsRef.current = null;
+      setWsConnected(false);
+      return;
+    }
+
+    // Fetch initial feature state
+    apiClient<Features>('/api/features').then(setFeaturesState).catch(() => {});
+
+    let dead = false;
+    const connect = () => {
+      if (dead) return;
+      const ws = new WebSocket(LOG_WS_URL);
+      wsRef.current = ws;
+      ws.onopen = () => { if (!dead) setWsConnected(true); };
+      ws.onclose = () => {
+        if (!dead) {
+          setWsConnected(false);
+          wsRetryRef.current = setTimeout(connect, 3000);
+        }
+      };
+      ws.onerror = () => { ws.close(); };
+      ws.onmessage = (e) => {
+        if (dead) return;
+        try {
+          const msg = JSON.parse(e.data as string) as Record<string, unknown>;
+          if (msg.type === 'server_event' && msg.kind === 'features') {
+            setFeaturesState(msg.data as Features);
+            return;
+          }
+          // Forward log entries to any listening page
+          if (msg.id && msg.method) {
+            window.dispatchEvent(new CustomEvent('cli-log', { detail: msg }));
+          }
+        } catch { /**/ }
+      };
+    };
+    connect();
+    return () => {
+      dead = true;
+      if (wsRetryRef.current) clearTimeout(wsRetryRef.current);
+      wsRef.current?.close();
+    };
+  }, [connected]);
+
   // Cmd+K is handled by GlobalHotkeys (inside HotkeysProvider) — no manual listener needed
 
   // Keyboard help button in sidebar fires this custom event
@@ -298,7 +360,7 @@ function AppShell() {
           <h1 style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-0.04em', color: 'var(--foreground)', lineHeight: 1.25, margin: 0 }}>
             Hey 👋
             <br />
-            Welcome to OpenAPI Agent Studio
+            Welcome to Wasper Studio
           </h1>
           <div style={{ marginTop: 12, fontSize: 14, color: 'var(--muted-foreground)', display: 'flex', alignItems: 'center', gap: 10 }}>
             Connecting to the CLI…
@@ -336,6 +398,8 @@ function AppShell() {
       theme, toggleTheme, cmdOpen, setCmdOpen, connected: connected ?? false,
       sidebarCollapsed, toggleSidebar,
       envs, activeEnvId, setActiveEnvId, reloadEnvs,
+      features, setFeatures: setFeaturesState,
+      wsConnected,
     }}>
       {HotkeysLayer ? (
         <HotkeysLayer

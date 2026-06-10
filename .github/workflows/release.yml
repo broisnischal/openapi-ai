@@ -1,0 +1,77 @@
+name: Release CLI Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: packages/cli
+        run: bun install --frozen-lockfile
+
+      - name: Build npm bundle
+        working-directory: packages/cli
+        run: bun run build && chmod +x dist/cli.js bin/wasper.js
+
+      - name: Build standalone binaries
+        working-directory: packages/cli
+        run: bun scripts/build-binaries.ts
+
+      - name: List built assets
+        run: ls -lh packages/cli/dist/bin/
+
+      - name: Publish to npm
+        working-directory: packages/cli
+        run: npm publish --access=public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release & upload binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          name: wasper ${{ github.ref_name }}
+          body: |
+            ## wasper ${{ github.ref_name }}
+
+            ### Install via npm / bun
+            ```bash
+            npm install -g wasper-cli
+            # or
+            bunx wasper-cli --url <openapi-spec-url>
+            ```
+
+            ### Standalone binaries (no Bun/Node required)
+            Download the binary for your platform below and run it directly.
+
+            | Platform | File |
+            |---|---|
+            | Linux x64 | `wasper-linux-x64` |
+            | Linux ARM64 | `wasper-linux-arm64` |
+            | macOS x64 | `wasper-darwin-x64` |
+            | macOS ARM64 (Apple Silicon) | `wasper-darwin-arm64` |
+            | Windows x64 | `wasper-windows-x64.exe` |
+          files: |
+            packages/cli/dist/bin/wasper-linux-x64
+            packages/cli/dist/bin/wasper-linux-arm64
+            packages/cli/dist/bin/wasper-darwin-x64
+            packages/cli/dist/bin/wasper-darwin-arm64
+            packages/cli/dist/bin/wasper-windows-x64.exe
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

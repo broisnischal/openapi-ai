@@ -2,6 +2,7 @@ import { dbQueries, randomUUID } from "../db/index";
 import { applyAuth, type AuthConfig } from "../auth/engine";
 import { logBus } from "../logs/bus";
 import { getState } from "../state";
+import { getServerConfig, readonlyViolation } from "../config";
 
 function applyInterceptRules(method: string, path: string, baseUrl: string): { targetBase: string; targetPath: string; extraHeaders: Record<string, string> } {
   const rules = dbQueries.getRules().filter(r => r.enabled === 1);
@@ -39,7 +40,18 @@ export async function proxyHandler(req: Request): Promise<Response> {
   if (req.method === "OPTIONS")
     return new Response(null, { status: 204, headers: CORS });
 
+  const blocked = readonlyViolation(req.method);
+  if (blocked) {
+    return new Response(JSON.stringify({ error: blocked }), {
+      status: 403,
+      headers: { "Content-Type": "application/json", ...CORS },
+    });
+  }
+
   const url = new URL(req.url);
+  // Never forward our own access token to the upstream API
+  const gateToken = getServerConfig().token;
+  if (gateToken && url.searchParams.get("token") === gateToken) url.searchParams.delete("token");
   const apiPath = url.pathname.replace(/^\/proxy/, "") || "/";
   const { spec } = getState();
 
@@ -55,10 +67,13 @@ export async function proxyHandler(req: Request): Promise<Response> {
   const { targetBase, targetPath, extraHeaders } = applyInterceptRules(req.method, apiPath, baseUrl);
   const targetUrl = `${targetBase}${targetPath}${url.search}`;
 
+  const accessToken = getServerConfig().token;
   const proxyHeaders: Record<string, string> = {};
   for (const [k, v] of req.headers.entries()) {
-    if (!["host", "connection", "transfer-encoding"].includes(k.toLowerCase()))
-      proxyHeaders[k] = v;
+    if (["host", "connection", "transfer-encoding"].includes(k.toLowerCase())) continue;
+    // Never forward our own access token to the upstream API
+    if (k.toLowerCase() === "authorization" && accessToken && v === `Bearer ${accessToken}`) continue;
+    proxyHeaders[k] = v;
   }
   Object.assign(proxyHeaders, extraHeaders);
 

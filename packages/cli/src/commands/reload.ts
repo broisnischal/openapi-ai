@@ -15,6 +15,7 @@ export async function run() {
   try {
     const res = await fetch(`http://localhost:${state.port}/api/reload`, {
       method: 'POST',
+      headers: state.token ? { Authorization: `Bearer ${state.token}` } : undefined,
       signal: AbortSignal.timeout(30_000),
     });
     const data = await res.json() as { ok?: boolean; error?: string; spec?: string; endpoints?: number };

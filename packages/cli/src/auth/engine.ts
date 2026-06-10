@@ -87,22 +87,34 @@ interface TokenCache {
   expires_at: number;
 }
 
-let memCache: TokenCache | null = null;
+// Tokens are cached per (tokenUrl, clientId, scope) so concurrent requests with
+// different inline auth configs never reuse each other's tokens.
+const memCaches = new Map<string, TokenCache>();
 
-function getCachedToken(): string | null {
-  if (memCache && Date.now() < memCache.expires_at - 30_000) return memCache.access_token;
+function cacheKey(c: AuthConfig): string {
+  return `${c.tokenUrl ?? ''}|${c.clientId ?? ''}|${c.scope ?? ''}`;
+}
+
+function getCachedToken(config: AuthConfig): string | null {
+  const key = cacheKey(config);
+  const mem = memCaches.get(key);
+  if (mem && Date.now() < mem.expires_at - 30_000) return mem.access_token;
+
+  // Persisted cache only applies to the globally active config
   const row = dbQueries.getAuthConfig();
   if (row?.token_cache) {
     try {
+      const rowConfig = JSON.parse(row.config) as AuthConfig;
+      if (cacheKey(rowConfig) !== key) return null;
       const tc = JSON.parse(row.token_cache) as TokenCache;
-      if (Date.now() < tc.expires_at - 30_000) { memCache = tc; return tc.access_token; }
+      if (Date.now() < tc.expires_at - 30_000) { memCaches.set(key, tc); return tc.access_token; }
     } catch {}
   }
   return null;
 }
 
 async function getOrRefreshOAuthToken(config: AuthConfig): Promise<string | null> {
-  const cached = getCachedToken();
+  const cached = getCachedToken(config);
   if (cached) return cached;
   if (!config.tokenUrl || !config.clientId) return null;
 
@@ -123,7 +135,7 @@ async function getOrRefreshOAuthToken(config: AuthConfig): Promise<string | null
     const data = (await res.json()) as { access_token?: string; expires_in?: number };
     if (!data.access_token) return null;
     const cache: TokenCache = { access_token: data.access_token, expires_at: Date.now() + (data.expires_in ?? 3600) * 1000 };
-    memCache = cache;
+    memCaches.set(cacheKey(config), cache);
     dbQueries.updateTokenCache(cache);
     return cache.access_token;
   } catch {

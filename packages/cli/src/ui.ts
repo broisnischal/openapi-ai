@@ -62,9 +62,13 @@ export function printBanner(opts: {
   specTitle?: string;
   specVersion?: string;
   endpointCount?: number;
+  specUrl?: string;
+  origin?: string;
+  host?: string;
+  tokenSet?: boolean;
 }) {
-  const { port, pid, specTitle, specVersion, endpointCount } = opts;
-  const base = `http://localhost:${port}`;
+  const { port, pid, specTitle, specVersion, endpointCount, origin, host, tokenSet } = opts;
+  const base = origin ?? `http://localhost:${port}`;
 
   const arrow = paint.cyan('➜');
   const dot   = paint.dim('·');
@@ -72,13 +76,14 @@ export function printBanner(opts: {
   const hint = [
     `${paint.bold('r')} reload`,
     `${paint.bold('b')} background`,
+    `${paint.bold('/')} commands  ${paint.dim('(Tab to complete)')}`,
     `${paint.bold('q')} quit`,
     `${paint.bold('?')} help`,
   ].join(`  ${dot}  `);
 
   const lines: string[] = [
     '',
-    `  ${paint.bold('openapi-agent')}  ${paint.dim('PID ' + pid)}`,
+    `  ${paint.bold('wasper')}  ${paint.dim('PID ' + pid)}`,
     '',
     `  ${arrow}  ${paint.dim('Studio ')}  ${paint.url(base + '/')}`,
     `  ${arrow}  ${paint.dim('MCP    ')}  ${paint.url(base + '/mcp')}`,
@@ -86,11 +91,21 @@ export function printBanner(opts: {
     '',
   ];
 
+  if (origin) {
+    lines.push(`  ${arrow}  ${paint.dim('Local  ')}  ${paint.url(`http://localhost:${port}/`)}${host && host !== '0.0.0.0' ? `  ${dot}  ${paint.dim('bound to ' + host)}` : ''}`, '');
+  }
+
   if (specTitle) {
     const ep = endpointCount != null ? `  ${dot}  ${paint.green(endpointCount + ' endpoints')}` : '';
     lines.push(`  ${paint.green('✓')}  ${paint.bold(specTitle)}  ${paint.dim('v' + (specVersion ?? ''))}${ep}`);
   } else {
     lines.push(`  ${paint.yellow('○')}  ${paint.dim('No spec — start with --url <url>')}`);
+  }
+
+  if (tokenSet) {
+    lines.push(`  ${paint.green('✓')}  ${paint.dim('Access token required (Authorization: Bearer … or ?token=)')}`);
+  } else if (origin) {
+    lines.push(`  ${paint.yellow('!')}  ${paint.yellow('Publicly reachable without a token — consider --token <secret>')}`);
   }
 
   lines.push('', `  ${hint}`, '');
@@ -117,8 +132,9 @@ export function printStatus(opts: {
   specVersion?: string;
   endpointCount?: number;
   specUrl?: string;
+  origin?: string;
 }) {
-  const { running, pid, port, uptime, specTitle, specVersion, endpointCount } = opts;
+  const { running, pid, port, uptime, specTitle, specVersion, endpointCount, origin } = opts;
 
   if (!running) {
     console.log(`\n  ${paint.dim('○')}  ${paint.bold('OpenAPI Agent')}  ${paint.dim('·')}  ${paint.yellow('not running')}\n`);
@@ -141,8 +157,9 @@ export function printStatus(opts: {
     console.log(`     ${paint.dim(k.padEnd(maxKey))}  ${v}`);
   }
   if (port) {
+    const base = origin ?? `http://localhost:${port}`;
     console.log();
-    console.log(`     ${paint.url(`http://localhost:${port}/`)}  ${paint.dim('·')}  ${paint.url(`http://localhost:${port}/mcp`)}`);
+    console.log(`     ${paint.url(`${base}/`)}  ${paint.dim('·')}  ${paint.url(`${base}/mcp`)}`);
   }
   console.log();
 }

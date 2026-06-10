@@ -1,12 +1,29 @@
 import { Database } from 'bun:sqlite';
 import { SCHEMA } from './schema';
 import { join } from 'path';
-import { mkdirSync } from 'fs';
+import { mkdirSync, existsSync } from 'fs';
+import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 
-const DATA_DIR = join(import.meta.dir, '../../data');
+// Data dir resolution: explicit env override → legacy in-repo dir (dev installs
+// that already have data) → ~/.wasper/data (global installs + compiled binaries).
+function resolveDataDir(): string {
+  if (process.env.WASPER_DATA_DIR ?? process.env.OPENAPI_AGENT_DATA_DIR) {
+    return (process.env.WASPER_DATA_DIR ?? process.env.OPENAPI_AGENT_DATA_DIR)!;
+  }
+  try {
+    const legacy = join(import.meta.dir, '../../data');
+    if (!Bun.main.includes('$bunfs') && (existsSync(join(legacy, 'wasper.db')) || existsSync(join(legacy, 'openapi-agent.db')))) return legacy;
+  } catch { /* compiled binary — import.meta.dir is virtual */ }
+  // Migrate from old ~/.openapi-agent/data if it exists
+  const oldDir = join(homedir(), '.openapi-agent', 'data');
+  if (existsSync(oldDir)) return oldDir;
+  return join(homedir(), '.wasper', 'data');
+}
+
+const DATA_DIR = resolveDataDir();
 mkdirSync(DATA_DIR, { recursive: true });
-const DB_PATH = join(DATA_DIR, 'openapi-agent.db');
+const DB_PATH = join(DATA_DIR, existsSync(join(DATA_DIR, 'openapi-agent.db')) && !existsSync(join(DATA_DIR, 'wasper.db')) ? 'openapi-agent.db' : 'wasper.db');
 
 export const db = new Database(DB_PATH, { create: true });
 db.exec('PRAGMA journal_mode = WAL;');
@@ -52,6 +69,34 @@ export interface AuthProfileRow {
   config: string;       // JSON
   token_cache: string | null;
   is_active: number;    // 0 or 1
+  created_at: number;
+}
+
+export interface SavedRequestRow {
+  id: string;
+  name: string;
+  folder: string;
+  method: string;
+  url: string;
+  headers: string;   // JSON KVRow[]
+  params: string;    // JSON KVRow[]
+  body: string;
+  body_type: string;
+  raw_type: string;
+  form_rows: string; // JSON KVRow[]
+  auth: string;      // JSON AuthConfig
+  notes: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface SpecHistoryRow {
+  id: string;
+  url: string;
+  title: string | null;
+  version: string | null;
+  endpoint_count: number | null;
+  last_used: number;
   created_at: number;
 }
 
@@ -168,9 +213,66 @@ export const dbQueries = {
     if (!profile) return;
     db.query('UPDATE auth_profiles SET is_active = 0').run();
     db.query('UPDATE auth_profiles SET is_active = 1 WHERE id = ?').run(id);
-    // Copy profile config to auth_config as the active auth
-    db.query('INSERT OR REPLACE INTO auth_config (id, type, config) VALUES (1, $type, $config)')
+    // Copy profile config to auth_config so execute_api_request uses it
+    db.query(`INSERT INTO auth_config (id, type, config, updated_at) VALUES ('default', $type, $config, unixepoch())
+      ON CONFLICT(id) DO UPDATE SET type=excluded.type, config=excluded.config, updated_at=unixepoch()`)
       .run({ $type: profile.type, $config: profile.config });
+  },
+
+  // ── Saved requests ──────────────────────────────────────────────────────────
+  getSavedRequests: (): SavedRequestRow[] =>
+    db.query('SELECT * FROM saved_requests ORDER BY folder, name COLLATE NOCASE').all() as SavedRequestRow[],
+
+  getSavedRequest: (id: string): SavedRequestRow | null =>
+    db.query('SELECT * FROM saved_requests WHERE id = ?').get(id) as SavedRequestRow | null,
+
+  insertSavedRequest: (r: Omit<SavedRequestRow, 'created_at' | 'updated_at'>) =>
+    db.query(`INSERT INTO saved_requests
+      (id, name, folder, method, url, headers, params, body, body_type, raw_type, form_rows, auth, notes)
+      VALUES ($id,$name,$folder,$method,$url,$headers,$params,$body,$body_type,$raw_type,$form_rows,$auth,$notes)`)
+      .run({ $id: r.id, $name: r.name, $folder: r.folder, $method: r.method, $url: r.url,
+        $headers: r.headers, $params: r.params, $body: r.body, $body_type: r.body_type,
+        $raw_type: r.raw_type, $form_rows: r.form_rows, $auth: r.auth, $notes: r.notes }),
+
+  updateSavedRequest: (id: string, patch: Partial<Omit<SavedRequestRow, 'id' | 'created_at' | 'updated_at'>>) => {
+    const cols = Object.keys(patch).map(k => `${k} = $${k}`).join(', ');
+    const params: Record<string, string | number> = { $id: id };
+    for (const [k, v] of Object.entries(patch)) params[`$${k}`] = v as string | number;
+    db.query(`UPDATE saved_requests SET ${cols}, updated_at = unixepoch() WHERE id = $id`).run(params);
+  },
+
+  deleteSavedRequest: (id: string) =>
+    db.query('DELETE FROM saved_requests WHERE id = ?').run(id),
+
+  // ── Spec history ───────────────────────────────────────────────────────────
+  getSpecHistory: (): SpecHistoryRow[] =>
+    db.query('SELECT * FROM spec_history ORDER BY last_used DESC').all() as SpecHistoryRow[],
+
+  getLastSpec: (): SpecHistoryRow | null =>
+    db.query('SELECT * FROM spec_history ORDER BY last_used DESC LIMIT 1').get() as SpecHistoryRow | null,
+
+  upsertSpec: (url: string, title: string | null, version: string | null, endpointCount: number | null): void => {
+    const existing = db.query<{ id: string }, [string]>('SELECT id FROM spec_history WHERE url = ?').get(url);
+    if (existing) {
+      db.query('UPDATE spec_history SET title=?, version=?, endpoint_count=?, last_used=unixepoch() WHERE url=?')
+        .run(title, version, endpointCount, url);
+    } else {
+      db.query(`INSERT INTO spec_history (id, url, title, version, endpoint_count)
+        VALUES (?, ?, ?, ?, ?)`)
+        .run(randomUUID(), url, title, version, endpointCount);
+    }
+  },
+
+  deleteSpec: (id: string): void => {
+    db.query('DELETE FROM spec_history WHERE id = ?').run(id);
+  },
+
+  // ── Generic key-value settings ──────────────────────────────────────────────
+  getSetting: (key: string): string | null =>
+    (db.query<{ value: string }, [string]>('SELECT value FROM settings WHERE key = ?').get(key) ?? null)?.value ?? null,
+
+  setSetting: (key: string, value: string): void => {
+    db.run('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', [key, value]);
   },
 };
 

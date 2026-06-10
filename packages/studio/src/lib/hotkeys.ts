@@ -17,7 +17,7 @@ export const HK = {
   // Explorer
   SEND:           'Mod+Enter' as Hotkey,
   NEW_TAB:        'Mod+T' as Hotkey,
-  CLOSE_TAB:      'Alt+W' as Hotkey,
+  CLOSE_TAB:      'Mod+W' as Hotkey,
   NEXT_TAB:       'Mod+]' as Hotkey,
   PREV_TAB:       'Mod+[' as Hotkey,
   FOCUS_URL:      'Mod+L' as Hotkey,
@@ -53,7 +53,7 @@ export const HOTKEY_DEFS: HotkeyDef[] = [
   // Explorer
   { id: 'send',          hotkey: HK.SEND,          label: 'Send request',       description: 'Fire the current request',       section: 'Explorer' },
   { id: 'new-tab',       hotkey: HK.NEW_TAB,       label: 'New tab',            description: 'Open a new blank request tab',   section: 'Explorer' },
-  { id: 'close-tab',     hotkey: HK.CLOSE_TAB,     label: 'Close tab',          description: 'Close the active request tab',   section: 'Explorer' },
+  { id: 'close-tab',     hotkey: HK.CLOSE_TAB,     label: 'Close tab',          description: 'Close the active tab (Ctrl/Cmd+W)', section: 'Explorer' },
   { id: 'next-tab',      hotkey: HK.NEXT_TAB,      label: 'Next tab',           description: 'Cycle forward through tabs',     section: 'Explorer' },
   { id: 'prev-tab',      hotkey: HK.PREV_TAB,      label: 'Previous tab',       description: 'Cycle backward through tabs',    section: 'Explorer' },
   { id: 'focus-url',     hotkey: HK.FOCUS_URL,     label: 'Focus URL bar',      description: 'Jump cursor to the URL input',   section: 'Explorer' },

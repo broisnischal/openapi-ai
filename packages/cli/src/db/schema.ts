@@ -55,4 +55,34 @@ export const SCHEMA = `
     is_active INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL DEFAULT (unixepoch())
   );
+
+  CREATE TABLE IF NOT EXISTS saved_requests (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT 'Untitled',
+    folder TEXT NOT NULL DEFAULT '',
+    method TEXT NOT NULL DEFAULT 'GET',
+    url TEXT NOT NULL DEFAULT '',
+    headers TEXT NOT NULL DEFAULT '[]',
+    params TEXT NOT NULL DEFAULT '[]',
+    body TEXT NOT NULL DEFAULT '',
+    body_type TEXT NOT NULL DEFAULT 'none',
+    raw_type TEXT NOT NULL DEFAULT 'text/plain',
+    form_rows TEXT NOT NULL DEFAULT '[]',
+    auth TEXT NOT NULL DEFAULT '{}',
+    notes TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+  CREATE INDEX IF NOT EXISTS idx_saved_folder ON saved_requests(folder, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS spec_history (
+    id TEXT PRIMARY KEY,
+    url TEXT NOT NULL UNIQUE,
+    title TEXT,
+    version TEXT,
+    endpoint_count INTEGER,
+    last_used INTEGER NOT NULL DEFAULT (unixepoch()),
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+  CREATE INDEX IF NOT EXISTS idx_spec_history_last_used ON spec_history(last_used DESC);
 `;

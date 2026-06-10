@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '../lib/api';
 import { cn } from '../lib/utils';
+import { Switch } from '../components/ui/switch';
 import { Plus, Trash2, Edit2, ArrowRightLeft, X, Check } from 'lucide-react';
 
 export const Route = createFileRoute('/intercept')({ component: InterceptPage });
@@ -170,26 +171,6 @@ function RuleFormPanel({ initial, onSave, onCancel, saving }: {
   );
 }
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: () => void }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={onChange}
-      className={cn(
-        'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-0 transition-colors duration-200 focus:outline-none',
-        checked ? 'bg-[var(--primary)]' : 'bg-[var(--elevated)]',
-      )}
-    >
-      <span className={cn(
-        'pointer-events-none inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform duration-200 translate-y-[3px]',
-        checked ? 'translate-x-[19px]' : 'translate-x-[3px]',
-      )} />
-    </button>
-  );
-}
-
 function RuleCard({ rule, onEdit, onDelete, onToggle }: {
   rule: InterceptRule; onEdit: () => void; onDelete: () => void; onToggle: () => void;
 }) {
@@ -203,7 +184,7 @@ function RuleCard({ rule, onEdit, onDelete, onToggle }: {
       !enabled && 'opacity-50',
     )}>
       <div className="flex items-center gap-3 px-4 py-3">
-        <Toggle checked={enabled} onChange={onToggle} />
+        <Switch checked={enabled} onChange={onToggle} aria-label="Enable rule" />
 
         <span className="font-semibold text-[13.5px] text-[var(--foreground)] flex-1 min-w-0 truncate">
           {rule.name || <span className="text-[var(--muted-foreground)] italic font-normal">Unnamed rule</span>}

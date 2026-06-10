@@ -1,5 +1,5 @@
 const DB_NAME = 'openapi-studio-v1';
-const DB_VERSION = 2;
+const DB_VERSION = 4;
 let _db: IDBDatabase | null = null;
 
 const hasIDB = typeof globalThis !== 'undefined' && typeof (globalThis as Record<string, unknown>)['indexedDB'] !== 'undefined';
@@ -14,6 +14,8 @@ function open(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains('environments')) db.createObjectStore('environments', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('cookies')) db.createObjectStore('cookies', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('explorer')) db.createObjectStore('explorer', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('workspaces')) db.createObjectStore('workspaces', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('chats')) db.createObjectStore('chats', { keyPath: 'id' });
     };
     r.onsuccess = e => { _db = (e.target as IDBOpenDBRequest).result; resolve(_db); };
     r.onerror = () => reject(r.error);

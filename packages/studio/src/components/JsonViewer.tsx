@@ -1,23 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context';
-
-// Lazy singleton highlighter — created once and reused
-let highlighterPromise: Promise<import('shiki').Highlighter> | null = null;
-
-function getHighlighter() {
-  if (!highlighterPromise) {
-    highlighterPromise = import('shiki').then(({ createHighlighter }) =>
-      createHighlighter({
-        themes: ['github-dark-dimmed', 'github-light'],
-        langs: ['json', 'bash', 'typescript', 'javascript', 'yaml', 'xml', 'html', 'text'],
-      }),
-    );
-  }
-  return highlighterPromise;
-}
-
-// Pre-warm on client only
-if (typeof window !== 'undefined') getHighlighter();
+import { getHighlighter } from '../lib/highlighter';
 
 interface Props {
   text: string;
@@ -58,7 +41,7 @@ export function JsonViewer({ text, lang, maxHeight = '100%' }: Props) {
       const out = hl.codeToHtml(formatted, { lang: detectedLang, theme: shikiTheme });
       setHtml(out);
       setReady(true);
-    }).catch(() => { setReady(true); });
+    }).catch((e) => { console.error('[Shiki]', e); setReady(true); });
   }, [formatted, shikiTheme, detectedLang]);
 
   const containerStyle: React.CSSProperties = {

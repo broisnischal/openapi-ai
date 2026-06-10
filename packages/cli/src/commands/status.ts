@@ -13,7 +13,10 @@ export async function run() {
   interface SpecInfo { title: string; version: string; endpointCount: number; specUrl: string | null }
   let spec: SpecInfo | null = null;
   try {
-    const res = await fetch(`http://localhost:${state.port}/api/server-info`, { signal: AbortSignal.timeout(2000) });
+    const res = await fetch(`http://localhost:${state.port}/api/server-info`, {
+      headers: state.token ? { Authorization: `Bearer ${state.token}` } : undefined,
+      signal: AbortSignal.timeout(2000),
+    });
     if (res.ok) {
       const info = await res.json() as { spec: SpecInfo | null };
       spec = info.spec;
@@ -29,5 +32,6 @@ export async function run() {
     specVersion: spec?.version ?? undefined,
     endpointCount: spec?.endpointCount ?? undefined,
     specUrl: spec?.specUrl ?? undefined,
+    origin: state.origin ?? undefined,
   });
 }

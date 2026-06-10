@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "openapi-studio",
+  "name": "wasper-studio",
   "account_id": "16b2c363a412bfaaec2a5a2572964728",
   "compatibility_date": "2025-10-01",
   "compatibility_flags": ["nodejs_compat"],

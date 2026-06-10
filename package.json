@@ -1,12 +1,12 @@
 {
-  "name": "openapi-agent",
+  "name": "wasper-monorepo",
   "private": true,
   "type": "module",
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "dev": "bun run --filter '@openapi-agent/cli' dev",
+    "dev": "bun run --filter 'wasper' dev",
     "dev:studio": "npm run dev --workspace=packages/studio",
     "build": "bun run --filter '*' build",
     "lint": "npm run lint --workspaces --if-present",

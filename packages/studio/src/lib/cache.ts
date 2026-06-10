@@ -6,7 +6,7 @@ function getStore() {
   if (typeof window === 'undefined') return null;
   if (!store) {
     store = localforage.createInstance({
-      name: 'openapi-agent',
+      name: 'wasper',
       storeName: 'spec_cache',
       description: 'Cached spec data for fast initial load',
     });

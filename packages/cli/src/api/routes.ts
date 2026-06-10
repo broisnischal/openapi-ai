@@ -2,11 +2,14 @@ import { dbQueries, randomUUID, type InterceptRuleRow } from '../db/index';
 import { applyAuth, type AuthConfig } from '../auth/engine';
 import { logBus } from '../logs/bus';
 import { getState, hasState, loadSpec, loadSpecFromText } from '../state';
+import { getFeatures, setFeatures, readonlyViolation, type Features } from '../config';
+import { VERSION } from '../version';
+import dns from 'node:dns/promises';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
 function json(data: unknown, status = 200): Response {
@@ -46,20 +49,28 @@ export async function apiRouter(req: Request): Promise<Response> {
   if (path.startsWith('/api/intercept/') && method === 'PUT') return handleUpdateRule(req, path);
   if (path.startsWith('/api/intercept/') && method === 'DELETE') return handleDeleteRule(path);
   if (path === '/api/ai/chat' && method === 'POST') return handleAiChat(req);
+  if (path === '/api/debug/dns' && method === 'GET') return handleDnsQuery(searchParams);
+  if (path === '/api/debug/ping' && method === 'GET') return handlePing(searchParams);
   if (path === '/api/reload' && method === 'POST') return handleReload();
   if (path === '/api/server-info' && method === 'GET') return handleServerInfo();
+  if (path === '/api/features' && method === 'GET') return json(getFeatures());
+  if (path === '/api/features' && method === 'PUT') return handleSetFeatures(req);
+  if (path === '/api/saved' && method === 'GET') return handleGetSaved();
+  if (path === '/api/saved' && method === 'POST') return handleCreateSaved(req);
+  if (path.startsWith('/api/saved/') && method === 'PUT') return handleUpdateSaved(req, path);
+  if (path.startsWith('/api/saved/') && method === 'DELETE') return handleDeleteSaved(path);
 
   return notFound('API route not found');
 }
 
 function handleStatus(): Response {
   if (!hasState()) {
-    return json({ ok: true, version: '0.1.0', spec: null, endpointCount: 0, wsClients: logBus.clientCount });
+    return json({ ok: true, version: VERSION, spec: null, endpointCount: 0, wsClients: logBus.clientCount });
   }
   const { spec, operations } = getState();
   return json({
     ok: true,
-    version: '0.1.0',
+    version: VERSION,
     spec: { title: spec.title, version: spec.version, baseUrl: spec.baseUrl, url: spec.url },
     endpointCount: operations.length,
     wsClients: logBus.clientCount,
@@ -78,12 +89,32 @@ async function handleReload(): Promise<Response> {
   }
 }
 
+async function handleSetFeatures(req: Request): Promise<Response> {
+  let body: Partial<Features>;
+  try { body = (await req.json()) as Partial<Features>; } catch { return badRequest('Invalid JSON'); }
+  const patch: Partial<Features> = {};
+  for (const key of ['mcp', 'proxy', 'ai', 'readonly'] as const) {
+    if (typeof body[key] === 'boolean') patch[key] = body[key];
+  }
+  setFeatures(patch);
+  persistAndBroadcastFeatures();
+  return json(getFeatures());
+}
+
+export function persistAndBroadcastFeatures(): void {
+  const f = getFeatures();
+  // Persist mcp/proxy/ai (not readonly — it's a safety flag, should not survive restart)
+  dbQueries.setSetting('features', JSON.stringify({ mcp: f.mcp, proxy: f.proxy, ai: f.ai }));
+  logBus.broadcastServerEvent({ kind: 'features', data: f });
+}
+
 function handleServerInfo(): Response {
   const state = hasState() ? getState() : null;
   return json({
     pid: process.pid,
     port: parseInt(process.env._OA_PORT ?? '3388', 10),
     startedAt: parseInt(process.env._OA_STARTED ?? '0', 10),
+    features: getFeatures(),
     spec: state ? {
       title: state.spec.title,
       version: state.spec.version,
@@ -234,6 +265,51 @@ const TOOL_DEFS = {
     params: { url: { type: 'string', description: 'URL to fetch' } },
     required: ['url'],
   },
+  dns_lookup: {
+    description: 'Perform a DNS lookup for a hostname. Returns A, AAAA, MX, TXT, NS, and CNAME records. Useful for diagnosing connectivity, understanding API server topology, or checking DNS configuration.',
+    params: {
+      host: { type: 'string', description: 'Hostname to look up, e.g. "api.example.com"' },
+      type: { type: 'string', enum: ['A', 'AAAA', 'MX', 'TXT', 'NS', 'CNAME', 'ALL'], description: 'DNS record type (default: ALL)' },
+    },
+    required: ['host'],
+  },
+  get_recent_logs: {
+    description: 'Get recent HTTP request/response logs captured by the proxy. Use to analyze traffic patterns, find errors, understand API usage, or investigate specific requests.',
+    params: {
+      limit: { type: 'number', description: 'Max number of logs to return (default 20, max 50)' },
+      filter: { type: 'string', description: 'Optional filter: URL substring, method (GET/POST), or status code' },
+    },
+    required: [],
+  },
+  run_security_check: {
+    description: 'Run a security analysis on a specific API endpoint — checks for missing auth, insecure methods, exposed sensitive data patterns in the response, and common misconfigurations.',
+    params: {
+      operationId: { type: 'string', description: 'operationId of the endpoint to security-check' },
+    },
+    required: ['operationId'],
+  },
+  list_auth_profiles: {
+    description: 'List all saved authentication profiles. Shows name, type, and which is currently active. Call this before executing authenticated requests to know what credentials are available.',
+    params: {},
+    required: [],
+  },
+  set_active_auth: {
+    description: 'Switch to a different saved auth profile by name. Affects all subsequent execute_api_request calls in this session.',
+    params: {
+      name: { type: 'string', description: 'Exact profile name to activate (use list_auth_profiles to see options)' },
+    },
+    required: ['name'],
+  },
+  save_auth_token: {
+    description: 'Save a bearer token or API key as a named auth profile and immediately activate it. Call this right after a successful login endpoint returns a token so all subsequent API requests are authenticated.',
+    params: {
+      name: { type: 'string', description: 'Profile name, e.g. "user session" or the username' },
+      token: { type: 'string', description: 'The bearer token or API key value to save' },
+      token_type: { type: 'string', enum: ['bearer', 'apikey_header', 'apikey_query'], description: 'Token type (default: bearer)' },
+      header_name: { type: 'string', description: 'Header name for apikey_header type (default: X-Api-Key)' },
+    },
+    required: ['name', 'token'],
+  },
 };
 
 const ANTHROPIC_TOOLS = Object.entries(TOOL_DEFS).map(([name, def]) => ({
@@ -282,6 +358,8 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
   if (name === 'execute_api_request') {
     const op = operations.find(o => o.operationId === args.operationId);
     if (!op) return { text: `Endpoint not found: "${args.operationId}"`, isError: true };
+    const blocked = readonlyViolation(op.method);
+    if (blocked) return { text: blocked, isError: true };
 
     const pathParams = (args.pathParams as Record<string, string>) ?? {};
     const queryParams = (args.queryParams as Record<string, string>) ?? {};
@@ -323,7 +401,7 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
   if (name === 'fetch_url') {
     const url = String(args.url ?? '');
     try {
-      const res = await fetch(url, { headers: { 'User-Agent': 'openapi-agent/0.1' }, signal: AbortSignal.timeout(10000) });
+      const res = await fetch(url, { headers: { 'User-Agent': 'wasper/0.1' }, signal: AbortSignal.timeout(10000) });
       const text = await res.text();
       const stripped = text
         .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
@@ -338,6 +416,139 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
     }
   }
 
+  if (name === 'dns_lookup') {
+    const host = String(args.host ?? '').trim();
+    if (!host) return { text: 'Error: host is required', isError: true };
+    const type = String(args.type ?? 'ALL').toUpperCase();
+    try {
+      const results: Record<string, unknown> = { host, type };
+      const t0 = performance.now();
+      try {
+        const addrs = await dns.lookup(host, { all: true });
+        results.addresses = addrs.map(a => `${a.address} (IPv${a.family})`);
+      } catch { results.addresses = []; }
+      results.lookup_ms = Math.round(performance.now() - t0);
+      if (type === 'A' || type === 'ALL') { try { results.A = await dns.resolve4(host); } catch { results.A = []; } }
+      if (type === 'AAAA' || type === 'ALL') { try { results.AAAA = await dns.resolve6(host); } catch { results.AAAA = []; } }
+      if (type === 'MX' || type === 'ALL') { try { results.MX = await dns.resolveMx(host); } catch { results.MX = []; } }
+      if (type === 'TXT' || type === 'ALL') { try { results.TXT = await dns.resolveTxt(host); } catch { results.TXT = []; } }
+      if (type === 'NS' || type === 'ALL') { try { results.NS = await dns.resolveNs(host); } catch { results.NS = []; } }
+      if (type === 'CNAME' || type === 'ALL') { try { results.CNAME = await dns.resolveCname(host); } catch { results.CNAME = []; } }
+      return { text: JSON.stringify(results, null, 2), isError: false };
+    } catch (e) {
+      return { text: `DNS lookup failed: ${e instanceof Error ? e.message : String(e)}`, isError: true };
+    }
+  }
+
+  if (name === 'get_recent_logs') {
+    const limit = Math.min(Number(args.limit ?? 20), 50);
+    const filter = String(args.filter ?? '').toLowerCase();
+    const logs = dbQueries.getRecentLogs(100);
+    const filtered = filter
+      ? logs.filter(l =>
+          l.url?.toLowerCase().includes(filter) ||
+          l.method?.toLowerCase().includes(filter) ||
+          String(l.status_code ?? '').includes(filter),
+        )
+      : logs;
+    const sliced = filtered.slice(0, limit).map(l => ({
+      method: l.method, url: l.url, status: l.status_code,
+      latency_ms: l.latency_ms, error: l.error ?? null,
+      time: new Date(l.created_at > 1e12 ? l.created_at : l.created_at * 1000).toISOString(),
+    }));
+    return { text: JSON.stringify({ count: sliced.length, total: logs.length, logs: sliced }, null, 2), isError: false };
+  }
+
+  if (name === 'run_security_check') {
+    const opId = String(args.operationId ?? '');
+    const op = operations.find(o => o.operationId === opId);
+    if (!op) return { text: `Endpoint not found: "${opId}"`, isError: true };
+    const issues: string[] = [];
+    const warnings: string[] = [];
+    // Check method safety
+    if (['DELETE', 'PUT', 'PATCH'].includes(op.method.toUpperCase())) {
+      if (!op.parameters?.some(p => p.in === 'header' && /auth/i.test(p.name))) {
+        warnings.push(`${op.method.toUpperCase()} ${op.path}: No explicit auth parameter — ensure server enforces authentication`);
+      }
+    }
+    // Check for sensitive data in path
+    if (/password|secret|token|key/i.test(op.path)) {
+      issues.push(`Path contains sensitive keyword: "${op.path}" — avoid passing secrets in URL paths`);
+    }
+    // Check for missing security schemes
+    const hasAuth = op.parameters?.some(p => /auth|token|key|bearer/i.test(p.name));
+    if (!hasAuth && op.method.toUpperCase() !== 'GET') {
+      warnings.push(`No auth parameters found on ${op.method.toUpperCase()} ${op.path} — verify server requires authentication`);
+    }
+    // Check for overly permissive methods
+    if (op.method.toUpperCase() === 'GET' && op.path.toLowerCase().includes('/admin')) {
+      warnings.push(`Admin GET endpoint ${op.path} — ensure proper authorization checks`);
+    }
+    const result = {
+      operationId: opId,
+      method: op.method.toUpperCase(),
+      path: op.path,
+      issues: issues.length ? issues : ['No critical issues found'],
+      warnings: warnings.length ? warnings : ['No warnings'],
+      recommendations: [
+        'Always validate JWT tokens server-side',
+        'Rate-limit sensitive endpoints',
+        'Use HTTPS in production',
+        'Avoid returning stack traces in error responses',
+      ],
+    };
+    return { text: JSON.stringify(result, null, 2), isError: false };
+  }
+
+  if (name === 'list_auth_profiles') {
+    const profiles = dbQueries.getProfiles();
+    if (!profiles.length) return { text: 'No auth profiles saved. Use save_auth_token to create one after a successful login.', isError: false };
+    const list = profiles.map(p => ({ id: p.id, name: p.name, type: p.type, active: p.is_active === 1 }));
+    return { text: JSON.stringify({ count: list.length, profiles: list }, null, 2), isError: false };
+  }
+
+  if (name === 'set_active_auth') {
+    const target = String(args.name ?? '');
+    const profiles = dbQueries.getProfiles();
+    const match = profiles.find(p => p.name.toLowerCase() === target.toLowerCase()) ?? profiles.find(p => p.id === target);
+    if (!match) {
+      const names = profiles.map(p => p.name).join(', ') || 'none saved';
+      return { text: `Profile not found: "${target}". Available: ${names}`, isError: true };
+    }
+    dbQueries.activateProfile(match.id);
+    return { text: JSON.stringify({ success: true, message: `Switched to "${match.name}" (${match.type})` }), isError: false };
+  }
+
+  if (name === 'save_auth_token') {
+    const profileName = String(args.name ?? 'AI Login').trim();
+    const token = String(args.token ?? '').trim();
+    if (!token) return { text: 'Error: token is required', isError: true };
+    const tokenType = String(args.token_type ?? 'bearer');
+    const headerName = String(args.header_name ?? 'X-Api-Key');
+
+    let authConfig: Record<string, string>;
+    let type: string;
+    if (tokenType === 'apikey_header') {
+      authConfig = { type: 'apikey_header', header: headerName, value: token };
+      type = 'apikey_header';
+    } else if (tokenType === 'apikey_query') {
+      authConfig = { type: 'apikey_query', param: headerName, value: token };
+      type = 'apikey_query';
+    } else {
+      authConfig = { type: 'bearer', token };
+      type = 'bearer';
+    }
+
+    const profileId = randomUUID();
+    try {
+      dbQueries.insertProfile({ id: profileId, name: profileName, description: 'Saved by AI', type, config: JSON.stringify(authConfig), token_cache: null, is_active: 0 });
+      dbQueries.activateProfile(profileId);
+      return { text: JSON.stringify({ success: true, message: `Saved and activated profile "${profileName}" (${type})`, id: profileId }), isError: false };
+    } catch (e) {
+      return { text: `Error saving profile: ${e instanceof Error ? e.message : String(e)}`, isError: true };
+    }
+  }
+
   return { text: `Unknown tool: ${name}`, isError: true };
 }
 
@@ -346,40 +557,139 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
 type Msg = { role: string; content: unknown; tool_call_id?: string };
 type Emit = (e: Record<string, unknown>) => void;
 
+async function fetchWithRetry(url: string, opts: RequestInit, emit: Emit, maxRetries = 3): Promise<Response> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch(url, opts);
+    if (res.status !== 429 || attempt === maxRetries) return res;
+    const retryAfter = parseInt(res.headers.get('retry-after') ?? '0', 10);
+    const delay = retryAfter > 0 ? retryAfter * 1000 : Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 30000);
+    emit({ type: 'info', message: `Rate limited — retrying in ${Math.round(delay / 1000)}s… (attempt ${attempt + 1}/${maxRetries})` });
+    await new Promise(r => setTimeout(r, delay));
+  }
+  // unreachable, but satisfies TS
+  return fetch(url, opts);
+}
+
+const MAX_TOTAL_TOOLS = 40;
+const MAX_CONSECUTIVE_ERRORS = 5;
+const MAX_SAME_ENDPOINT_ERRORS = 3;
+
 async function anthropicAgentLoop(
   apiKey: string, model: string, system: string, initialMessages: Msg[], emit: Emit,
 ): Promise<{ content: string; toolCalls: ToolCall[] }> {
   const msgs: Msg[] = [...initialMessages];
   const toolCalls: ToolCall[] = [];
+  let totalTools = 0;
+  let consecutiveErrors = 0;
+  const endpointErrors: Record<string, number> = {};
 
-  for (let iter = 0; iter < 10; iter++) {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+  for (let iter = 0; iter < 40; iter++) {
+    const res = await fetchWithRetry('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model, max_tokens: 4096, system, messages: msgs, tools: ANTHROPIC_TOOLS }),
-    });
+      body: JSON.stringify({ model, max_tokens: 4096, system, messages: msgs, tools: ANTHROPIC_TOOLS, stream: true }),
+    }, emit);
     if (!res.ok) throw new Error(`Anthropic error: ${await res.text()}`);
 
-    const d = await res.json() as {
-      stop_reason: string;
-      content: Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }>;
-    };
+    // Parse streaming SSE response
+    let fullText = '';
+    let stopReason = '';
+    const contentBlocks: Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }> = [];
+    const inputAccum: Record<number, string> = {};
 
-    const textBlock = d.content.find(c => c.type === 'text');
-    if (d.stop_reason !== 'tool_use') return { content: textBlock?.text ?? '', toolCalls };
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
 
-    msgs.push({ role: 'assistant', content: d.content });
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop() ?? '';
 
+      for (const part of parts) {
+        let dataLine = '';
+        for (const line of part.split('\n')) {
+          if (line.startsWith('data: ')) { dataLine = line.slice(6); break; }
+        }
+        if (!dataLine || dataLine === '[DONE]') continue;
+        let ev: Record<string, unknown>;
+        try { ev = JSON.parse(dataLine) as Record<string, unknown>; } catch { continue; }
+
+        const type = ev.type as string;
+        if (type === 'content_block_start') {
+          const idx = ev.index as number;
+          const cb = ev.content_block as { type: string; id?: string; name?: string };
+          contentBlocks[idx] = { type: cb.type, id: cb.id, name: cb.name };
+          if (cb.type === 'tool_use') inputAccum[idx] = '';
+        } else if (type === 'content_block_delta') {
+          const idx = ev.index as number;
+          const delta = ev.delta as { type: string; text?: string; partial_json?: string };
+          if (delta.type === 'text_delta' && delta.text) {
+            fullText += delta.text;
+            if (!contentBlocks[idx]) contentBlocks[idx] = { type: 'text', text: '' };
+            contentBlocks[idx].text = (contentBlocks[idx].text ?? '') + delta.text;
+            emit({ type: 'text_delta', text: delta.text });
+          } else if (delta.type === 'input_json_delta' && delta.partial_json) {
+            inputAccum[idx] = (inputAccum[idx] ?? '') + delta.partial_json;
+          }
+        } else if (type === 'content_block_stop') {
+          const idx = ev.index as number;
+          if (contentBlocks[idx]?.type === 'tool_use') {
+            try { contentBlocks[idx].input = JSON.parse(inputAccum[idx] ?? '{}'); }
+            catch { contentBlocks[idx].input = {}; }
+          }
+        } else if (type === 'message_delta') {
+          const delta = ev.delta as { stop_reason?: string };
+          if (delta.stop_reason) stopReason = delta.stop_reason;
+        }
+      }
+    }
+
+    if (stopReason !== 'tool_use') return { content: fullText, toolCalls };
+
+    // Guard: stop if too many tools used
+    if (totalTools >= MAX_TOTAL_TOOLS) {
+      return { content: `Agent stopped: reached ${MAX_TOTAL_TOOLS} tool calls. Please break your request into smaller steps.`, toolCalls };
+    }
+
+    msgs.push({ role: 'assistant', content: contentBlocks });
     const toolResults: Array<{ type: string; tool_use_id: string; content: string }> = [];
-    for (const block of d.content) {
+    for (const block of contentBlocks) {
       if (block.type !== 'tool_use' || !block.id || !block.name) continue;
+      totalTools++;
       emit({ type: 'tool_start', tool: block.name, input: block.input ?? {} });
       const result = await executeTool(block.name, block.input ?? {});
       emit({ type: 'tool_done', tool: block.name, input: block.input ?? {}, output: result.text, isError: result.isError });
       toolCalls.push({ tool: block.name, input: block.input ?? {}, output: result.text, isError: result.isError });
+
+      if (result.isError) {
+        consecutiveErrors++;
+        // Track per-endpoint repeated failures
+        if (block.name === 'execute_api_request' && block.input?.operationId) {
+          const eid = String(block.input.operationId);
+          endpointErrors[eid] = (endpointErrors[eid] ?? 0) + 1;
+          if (endpointErrors[eid] >= MAX_SAME_ENDPOINT_ERRORS) {
+            const stopContent = result.text + `\n\n[AGENT LOOP STOPPED: endpoint "${eid}" failed ${MAX_SAME_ENDPOINT_ERRORS} times — stopping to avoid loop]`;
+            toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: stopContent });
+            msgs.push({ role: 'user', content: toolResults });
+            return { content: `Endpoint "${eid}" failed ${MAX_SAME_ENDPOINT_ERRORS} times. Last error: ${result.text}`, toolCalls };
+          }
+        }
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          const stopMsg = `Stopped after ${MAX_CONSECUTIVE_ERRORS} consecutive errors. Last: ${result.text}`;
+          const stopContent = result.text + `\n\n[AGENT LOOP STOPPED: ${stopMsg}]`;
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: stopContent });
+          msgs.push({ role: 'user', content: toolResults });
+          return { content: stopMsg, toolCalls };
+        }
+      } else {
+        consecutiveErrors = 0;
+      }
       toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: result.text });
     }
-    if (!toolResults.length) return { content: textBlock?.text ?? '', toolCalls };
+    if (!toolResults.length) return { content: fullText, toolCalls };
     msgs.push({ role: 'user', content: toolResults });
   }
   return { content: '(max iterations reached)', toolCalls };
@@ -393,38 +703,117 @@ async function openaiCompatibleLoop(
   const toolCalls: ToolCall[] = [];
   const authHeaders: Record<string, string> = {};
   if (apiKey) authHeaders['Authorization'] = `Bearer ${apiKey}`;
+  let totalTools = 0;
+  let consecutiveErrors = 0;
+  const endpointErrors: Record<string, number> = {};
 
-  for (let iter = 0; iter < 10; iter++) {
-    const res = await fetch(`${base}/v1/chat/completions`, {
+  for (let iter = 0; iter < 40; iter++) {
+    const res = await fetchWithRetry(`${base}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders, ...extraHeaders },
-      body: JSON.stringify({ model, messages: msgs, tools: OPENAI_TOOLS, tool_choice: 'auto' }),
-    });
+      body: JSON.stringify({ model, messages: msgs, tools: OPENAI_TOOLS, tool_choice: 'auto', stream: true }),
+    }, emit);
     if (!res.ok) throw new Error(await res.text());
 
-    const d = await res.json() as {
-      choices: Array<{
-        finish_reason: string;
-        message: {
-          role: string; content: string | null;
-          tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
-        };
-      }>;
-    };
-    const choice = d.choices?.[0];
-    if (!choice) return { content: '', toolCalls };
+    // Parse streaming SSE response
+    let fullContent = '';
+    let finishReason = '';
+    const tcAccum: Record<number, { id: string; name: string; args: string }> = {};
 
-    if (choice.finish_reason !== 'tool_calls') return { content: choice.message.content ?? '', toolCalls };
+    const reader = res.body!.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
 
-    msgs.push(choice.message as Msg);
-    for (const tc of choice.message.tool_calls ?? []) {
+    outer: while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop() ?? '';
+
+      for (const part of parts) {
+        let data = '';
+        for (const line of part.split('\n')) {
+          if (line.startsWith('data: ')) { data = line.slice(6); break; }
+        }
+        if (!data) continue;
+        if (data === '[DONE]') break outer;
+
+        let ev: Record<string, unknown>;
+        try { ev = JSON.parse(data) as Record<string, unknown>; } catch { continue; }
+
+        // Provider error returned in stream body (e.g. Groq rate limit)
+        if (ev.object === 'error') throw new Error(JSON.stringify(ev));
+
+        const choices = ev.choices as Array<Record<string, unknown>> | undefined;
+        const choice = choices?.[0];
+        if (!choice) continue;
+
+        const fr = choice.finish_reason as string | null;
+        if (fr) finishReason = fr;
+
+        const delta = choice.delta as Record<string, unknown> | undefined;
+        if (!delta) continue;
+
+        if (typeof delta.content === 'string' && delta.content) {
+          fullContent += delta.content;
+          emit({ type: 'text_delta', text: delta.content });
+        }
+
+        const tcDeltas = delta.tool_calls as Array<{
+          index: number; id?: string;
+          function?: { name?: string; arguments?: string };
+        }> | undefined;
+        if (tcDeltas) {
+          for (const tc of tcDeltas) {
+            if (!tcAccum[tc.index]) tcAccum[tc.index] = { id: '', name: '', args: '' };
+            const entry = tcAccum[tc.index]!;
+            if (tc.id) entry.id += tc.id;
+            if (tc.function?.name) entry.name += tc.function.name;
+            if (tc.function?.arguments) entry.args += tc.function.arguments;
+          }
+        }
+      }
+    }
+
+    if (finishReason !== 'tool_calls') return { content: fullContent, toolCalls };
+
+    // Guard: stop if too many tools used
+    if (totalTools >= MAX_TOTAL_TOOLS) {
+      return { content: `Agent stopped: reached ${MAX_TOTAL_TOOLS} tool calls. Please break your request into smaller steps.`, toolCalls };
+    }
+
+    // Build tool call message and execute
+    const msgToolCalls = Object.values(tcAccum).map(tc => ({
+      id: tc.id, type: 'function',
+      function: { name: tc.name, arguments: tc.args },
+    }));
+    msgs.push({ role: 'assistant', content: fullContent || null, tool_calls: msgToolCalls } as Msg);
+
+    for (const tc of Object.values(tcAccum)) {
       let args: Record<string, unknown> = {};
-      try { args = JSON.parse(tc.function.arguments); } catch { /* */ }
-      emit({ type: 'tool_start', tool: tc.function.name, input: args });
-      const result = await executeTool(tc.function.name, args);
-      emit({ type: 'tool_done', tool: tc.function.name, input: args, output: result.text, isError: result.isError });
-      toolCalls.push({ tool: tc.function.name, input: args, output: result.text, isError: result.isError });
+      try { args = JSON.parse(tc.args); } catch { /* */ }
+      totalTools++;
+      emit({ type: 'tool_start', tool: tc.name, input: args });
+      const result = await executeTool(tc.name, args);
+      emit({ type: 'tool_done', tool: tc.name, input: args, output: result.text, isError: result.isError });
+      toolCalls.push({ tool: tc.name, input: args, output: result.text, isError: result.isError });
       msgs.push({ role: 'tool', tool_call_id: tc.id, content: result.text });
+      if (result.isError) {
+        consecutiveErrors++;
+        if (tc.name === 'execute_api_request' && args.operationId) {
+          const eid = String(args.operationId);
+          endpointErrors[eid] = (endpointErrors[eid] ?? 0) + 1;
+          if (endpointErrors[eid] >= MAX_SAME_ENDPOINT_ERRORS) {
+            return { content: `Endpoint "${eid}" failed ${MAX_SAME_ENDPOINT_ERRORS} times. Last error: ${result.text}`, toolCalls };
+          }
+        }
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          return { content: `Stopped after ${MAX_CONSECUTIVE_ERRORS} consecutive errors. Last: ${result.text}`, toolCalls };
+        }
+      } else {
+        consecutiveErrors = 0;
+      }
     }
   }
   return { content: '(max iterations reached)', toolCalls };
@@ -442,13 +831,33 @@ async function handleAiChat(req: Request): Promise<Response> {
 
   const { spec, operations } = getState();
   const preview = operations.slice(0, 40).map(op => `- ${op.method.toUpperCase()} ${op.path}${op.summary ? `: ${op.summary}` : ''}`).join('\n');
+  const activeAuth = dbQueries.getActiveProfile();
+  const authLine = activeAuth
+    ? `Active auth: "${activeAuth.name}" (${activeAuth.type})`
+    : 'No active auth profile. If the API requires auth, call list_auth_profiles first, then set_active_auth, or login and call save_auth_token.';
+
   const system = `You are an AI assistant for the "${spec.title}" API (v${spec.version}). Base URL: ${spec.baseUrl}.
 Total endpoints: ${operations.length}. Sample:
 ${preview}${operations.length > 40 ? `\n... and ${operations.length - 40} more` : ''}
 
-You have tools: search_endpoints, get_endpoint_schema, execute_api_request, fetch_url.
-Use them proactively — search before answering questions about endpoints, execute requests when asked to test/call an API, fetch URLs when the user asks about external docs.
-Be concise and practical. Render JSON in code blocks.`;
+${authLine}
+
+Tools available:
+- search_endpoints / get_endpoint_schema: explore API structure
+- execute_api_request: call an endpoint
+- list_auth_profiles: list all saved auth profiles (name, type, active)
+- set_active_auth(name): switch to a saved profile before making requests
+- save_auth_token(name, token): IMMEDIATELY call this after a successful login that returns a token — saves the token as a named profile and activates it so subsequent requests are authenticated
+- fetch_url: fetch external docs
+- dns_lookup: DNS resolution / connectivity
+- get_recent_logs: recent request/response traffic
+- run_security_check: security analysis on an endpoint
+
+Authentication workflow: if requests return 401/403, call list_auth_profiles first. If a profile exists, call set_active_auth. If none, find and call the login endpoint, extract the token from the response, then call save_auth_token immediately. After saving, retry the original request.
+
+IMPORTANT: if an endpoint returns an error, diagnose it (check the schema, check auth) and fix the root cause before retrying. If the same endpoint fails 3 times the agent will be forcibly stopped. Do not retry without changing something.
+
+Be concise and practical. Format code and JSON in code blocks.`;
 
   const provider = ai.provider ?? 'anthropic';
   const requiresKey = provider !== 'ollama' && provider !== 'custom';
@@ -600,7 +1009,7 @@ async function handleCreateRule(req: Request): Promise<Response> {
     target_host: body.target_host ?? '',
     strip_prefix: body.strip_prefix ?? '',
     add_prefix: body.add_prefix ?? '',
-    add_headers: body.add_headers ?? '{}',
+    add_headers: typeof body.add_headers === 'string' ? body.add_headers : JSON.stringify(body.add_headers ?? {}),
   };
   dbQueries.insertRule(rule);
   return json(rule, 201);
@@ -611,6 +1020,10 @@ async function handleUpdateRule(req: Request, path: string): Promise<Response> {
   if (!id) return badRequest('Missing rule id');
   let body: Partial<Omit<InterceptRuleRow, 'id' | 'created_at'>>;
   try { body = (await req.json()) as typeof body; } catch { return badRequest('Invalid JSON'); }
+  // Ensure add_headers is a JSON string, not a raw object
+  if ('add_headers' in body && typeof body.add_headers !== 'string') {
+    body = { ...body, add_headers: JSON.stringify(body.add_headers ?? {}) };
+  }
   dbQueries.updateRule(id, body);
   return json({ ok: true });
 }
@@ -622,12 +1035,48 @@ function handleDeleteRule(path: string): Response {
   return json({ ok: true });
 }
 
+interface MultipartPart {
+  name: string;
+  kind: 'text' | 'file';
+  value?: string;
+  filename?: string;
+  contentType?: string;
+  dataB64?: string;
+}
+
 async function handleExplorerRequest(req: Request): Promise<Response> {
-  let body: { method: string; url: string; headers?: Record<string, string>; body?: string };
+  let body: {
+    method: string; url: string; headers?: Record<string, string>; body?: string;
+    bodyB64?: string;
+    multipart?: MultipartPart[];
+    authProfile?: string;
+    auth?: AuthConfig;
+    interceptRuleId?: string;
+    /** Per-request timeout in ms (0 = no timeout). Falls back to global settings. */
+    timeout?: number;
+    /** Follow HTTP redirects (default true). */
+    followRedirects?: boolean;
+  };
   try { body = (await req.json()) as typeof body; } catch { return badRequest('Invalid JSON'); }
 
-  const authRow = dbQueries.getAuthConfig();
-  const authConfig: AuthConfig = authRow ? JSON.parse(authRow.config) : { type: 'none' };
+  const blocked = readonlyViolation(body.method ?? 'GET');
+  if (blocked) return json({ error: blocked }, 403);
+
+  let authConfig: AuthConfig;
+  if (body.auth?.type) {
+    authConfig = body.auth;
+  } else if (body.authProfile === 'none') {
+    authConfig = { type: 'none' };
+  } else if (body.authProfile) {
+    const profiles = dbQueries.getProfiles();
+    const profile = profiles.find(p => p.id === body.authProfile)
+      ?? profiles.find(p => p.name.toLowerCase() === body.authProfile!.toLowerCase());
+    if (!profile) return json({ error: `Auth profile not found: "${body.authProfile}"` }, 404);
+    authConfig = JSON.parse(profile.config) as AuthConfig;
+  } else {
+    const authRow = dbQueries.getAuthConfig();
+    authConfig = authRow ? JSON.parse(authRow.config) : { type: 'none' };
+  }
 
   // Resolve relative URLs against the spec base URL (or spec source origin as fallback)
   let reqUrl = body.url.trim();
@@ -644,19 +1093,242 @@ async function handleExplorerRequest(req: Request): Promise<Response> {
     }
   }
 
-  const { url: authedUrl, headers: authedHeaders } = await applyAuth(reqUrl, body.headers ?? {}, authConfig);
-
-  const startTime = Date.now();
-  try {
-    const res = await fetch(authedUrl, {
-      method: body.method.toUpperCase(),
-      headers: authedHeaders,
-      body: body.body ?? undefined,
-    });
-    const responseText = await res.text();
-    const latency = Date.now() - startTime;
-    return json({ status: res.status, headers: Object.fromEntries(res.headers.entries()), body: responseText, latency });
-  } catch (e) {
-    return json({ error: e instanceof Error ? e.message : String(e), latency: Date.now() - startTime }, 502);
+  // Apply a specific intercept rule when requested
+  let mergedHeaders = body.headers ?? {};
+  if (body.interceptRuleId) {
+    const rule = dbQueries.getRules().find(r => r.id === body.interceptRuleId);
+    if (rule) {
+      try {
+        const u = new URL(reqUrl);
+        if (rule.target_host) {
+          const targetOrigin = rule.target_host.startsWith('http') ? rule.target_host : `https://${rule.target_host}`;
+          let path = u.pathname;
+          if (rule.strip_prefix && path.startsWith(rule.strip_prefix)) path = path.slice(rule.strip_prefix.length) || '/';
+          if (rule.add_prefix) path = rule.add_prefix + path;
+          reqUrl = new URL(path + u.search + u.hash, targetOrigin).href;
+        }
+        if (rule.add_headers) {
+          const extra = JSON.parse(rule.add_headers) as Record<string, string>;
+          mergedHeaders = { ...mergedHeaders, ...extra };
+        }
+      } catch { /* malformed rule — ignore */ }
+    }
   }
+
+  const { url: authedUrl, headers: authedHeaders } = await applyAuth(reqUrl, mergedHeaders, authConfig);
+
+  // Build the outgoing body — multipart and binary need real bytes
+  let outBody: string | FormData | Buffer | undefined;
+  if (body.multipart?.length) {
+    const fd = new FormData();
+    for (const part of body.multipart) {
+      if (part.kind === 'file' && part.dataB64 != null) {
+        const bytes = Buffer.from(part.dataB64, 'base64');
+        fd.append(part.name, new Blob([bytes], { type: part.contentType || 'application/octet-stream' }), part.filename ?? 'file');
+      } else {
+        fd.append(part.name, part.value ?? '');
+      }
+    }
+    outBody = fd;
+    // fetch must set its own Content-Type with the boundary
+    for (const k of Object.keys(authedHeaders)) {
+      if (k.toLowerCase() === 'content-type') delete authedHeaders[k];
+    }
+  } else if (body.bodyB64) {
+    outBody = Buffer.from(body.bodyB64, 'base64');
+  } else {
+    outBody = body.body ?? undefined;
+  }
+
+  const settingsRow = dbQueries.getSettings();
+  const globalSettings = settingsRow ? (JSON.parse(settingsRow.value) as { request?: { timeout?: number; followRedirects?: boolean } }) : {};
+  const globalTimeout = globalSettings.request?.timeout ?? 30000;
+  const globalFollowRedirects = globalSettings.request?.followRedirects ?? true;
+
+  const timeoutMs = body.timeout !== undefined ? body.timeout : globalTimeout;
+  const followRedirects = body.followRedirects !== undefined ? body.followRedirects : globalFollowRedirects;
+
+  const fetchOpts: RequestInit = {
+    method: body.method.toUpperCase(),
+    headers: authedHeaders,
+    body: outBody,
+    redirect: followRedirects ? 'follow' : 'manual',
+  };
+  if (timeoutMs > 0) (fetchOpts as RequestInit & { signal: AbortSignal }).signal = AbortSignal.timeout(timeoutMs);
+
+  // DNS pre-resolution for timing measurement
+  let dnsMs = 0;
+  let resolvedAddr = '';
+  try {
+    const u = new URL(authedUrl);
+    const h = u.hostname;
+    const defaultPort = u.protocol === 'https:' ? 443 : 80;
+    const port = u.port ? Number(u.port) : defaultPort;
+    if (!/^[\d:.]+$/.test(h) && h !== 'localhost') {
+      const t0 = performance.now();
+      const r = await dns.lookup(h);
+      dnsMs = Math.round(performance.now() - t0);
+      resolvedAddr = `${r.address}:${port}`;
+    } else {
+      resolvedAddr = `${h}:${port}`;
+    }
+  } catch { /* ignore DNS pre-resolve errors */ }
+
+  const fetchStart = performance.now();
+  try {
+    const res = await fetch(authedUrl, fetchOpts);
+    const waitMs = Math.round(performance.now() - fetchStart);
+    const resHeaders = Object.fromEntries(res.headers.entries());
+    const ct = res.headers.get('content-type') ?? '';
+
+    const u = new URL(authedUrl);
+    const networkInfo = {
+      scheme: u.protocol.replace(':', ''),
+      host: u.host,
+      filename: u.pathname + u.search,
+      remoteAddr: resolvedAddr,
+      httpVersion: 'HTTP/1.1',
+      referrerPolicy: res.headers.get('referrer-policy') ?? '',
+    };
+
+    // Binary responses (images, pdf, …) can't survive .text() — ship base64
+    if (/^(image|audio|video)\//.test(ct) || ct.includes('application/pdf') || ct.includes('application/octet-stream')) {
+      const bufStart = performance.now();
+      const buf = Buffer.from(await res.arrayBuffer());
+      const receiveMs = Math.round(performance.now() - bufStart);
+      const latency = dnsMs + waitMs + receiveMs;
+      const timing = { dns: dnsMs, connect: 0, tls: 0, send: 0, wait: waitMs, receive: receiveMs, total: latency };
+      return json({ status: res.status, statusText: res.statusText, headers: resHeaders, bodyB64: buf.toString('base64'), size: buf.byteLength, latency, timing, networkInfo });
+    }
+
+    const bodyStart = performance.now();
+    const responseText = await res.text();
+    const receiveMs = Math.round(performance.now() - bodyStart);
+    const latency = dnsMs + waitMs + receiveMs;
+    const timing = { dns: dnsMs, connect: 0, tls: 0, send: 0, wait: waitMs, receive: receiveMs || 1, total: latency };
+
+    const redirectedTo = !followRedirects && res.status >= 300 && res.status < 400
+      ? { redirectedTo: res.headers.get('location') }
+      : {};
+    return json({ status: res.status, statusText: res.statusText, headers: resHeaders, body: responseText, size: new TextEncoder().encode(responseText).length, latency, timing, networkInfo, ...redirectedTo });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const isTimeout = msg.toLowerCase().includes('timed out') || msg.toLowerCase().includes('timeout');
+    return json({ error: isTimeout ? `Request timed out after ${timeoutMs}ms` : msg, latency: Math.round(performance.now() - fetchStart) + dnsMs }, 502);
+  }
+}
+
+// ── DNS & Network debug ─────────────────────────────────────────────────────────
+
+async function handleDnsQuery(params: URLSearchParams): Promise<Response> {
+  const host = params.get('host')?.trim();
+  if (!host) return badRequest('host is required');
+  const type = params.get('type')?.toUpperCase() ?? 'ALL';
+
+  try {
+    const result: Record<string, unknown> = { host, type, timestamp: new Date().toISOString() };
+    const t0 = performance.now();
+    try {
+      const addrs = await dns.lookup(host, { all: true });
+      result.addresses = addrs.map(a => ({ address: a.address, family: `IPv${a.family}` }));
+    } catch { result.addresses = []; }
+    result.lookup_ms = Math.round(performance.now() - t0);
+
+    if (type === 'A' || type === 'ALL') { try { result.A = await dns.resolve4(host); } catch { result.A = []; } }
+    if (type === 'AAAA' || type === 'ALL') { try { result.AAAA = await dns.resolve6(host); } catch { result.AAAA = []; } }
+    if (type === 'MX' || type === 'ALL') { try { result.MX = await dns.resolveMx(host); } catch { result.MX = []; } }
+    if (type === 'TXT' || type === 'ALL') { try { result.TXT = await dns.resolveTxt(host); } catch { result.TXT = []; } }
+    if (type === 'NS' || type === 'ALL') { try { result.NS = await dns.resolveNs(host); } catch { result.NS = []; } }
+    if (type === 'CNAME' || type === 'ALL') { try { result.CNAME = await dns.resolveCname(host); } catch { result.CNAME = []; } }
+
+    return json(result);
+  } catch (e) {
+    return json({ error: e instanceof Error ? e.message : String(e), host }, 502);
+  }
+}
+
+async function handlePing(params: URLSearchParams): Promise<Response> {
+  const host = params.get('host')?.trim();
+  if (!host) return badRequest('host is required');
+  const port = parseInt(params.get('port') ?? '80', 10);
+
+  const checks = [];
+  // DNS resolution
+  const dnsStart = performance.now();
+  let resolvedIp = '';
+  try {
+    const r = await dns.lookup(host);
+    resolvedIp = r.address;
+    checks.push({ step: 'dns', success: true, ip: r.address, ms: Math.round(performance.now() - dnsStart) });
+  } catch (e) {
+    checks.push({ step: 'dns', success: false, error: e instanceof Error ? e.message : String(e), ms: Math.round(performance.now() - dnsStart) });
+  }
+
+  // HTTP reachability check
+  if (resolvedIp) {
+    const httpStart = performance.now();
+    const scheme = port === 443 ? 'https' : 'http';
+    try {
+      const res = await fetch(`${scheme}://${host}:${port}/`, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(5000),
+        redirect: 'manual',
+      });
+      checks.push({ step: 'http', success: true, status: res.status, ms: Math.round(performance.now() - httpStart) });
+    } catch (e) {
+      checks.push({ step: 'http', success: false, error: e instanceof Error ? e.message : String(e), ms: Math.round(performance.now() - httpStart) });
+    }
+  }
+
+  return json({ host, port, resolvedIp, checks, timestamp: new Date().toISOString() });
+}
+
+// ── Saved requests ─────────────────────────────────────────────────────────────
+
+function handleGetSaved(): Response {
+  return json(dbQueries.getSavedRequests());
+}
+
+async function handleCreateSaved(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try { body = (await req.json()) as Record<string, unknown>; } catch { return badRequest('Invalid JSON'); }
+  if (!body.name || typeof body.name !== 'string') return badRequest('name is required');
+  const id = randomUUID();
+  dbQueries.insertSavedRequest({
+    id,
+    name: String(body.name),
+    folder: String(body.folder ?? ''),
+    method: String(body.method ?? 'GET'),
+    url: String(body.url ?? ''),
+    headers: typeof body.headers === 'string' ? body.headers : JSON.stringify(body.headers ?? []),
+    params: typeof body.params === 'string' ? body.params : JSON.stringify(body.params ?? []),
+    body: String(body.body ?? ''),
+    body_type: String(body.body_type ?? 'none'),
+    raw_type: String(body.raw_type ?? 'text/plain'),
+    form_rows: typeof body.form_rows === 'string' ? body.form_rows : JSON.stringify(body.form_rows ?? []),
+    auth: typeof body.auth === 'string' ? body.auth : JSON.stringify(body.auth ?? {}),
+    notes: String(body.notes ?? ''),
+  });
+  return json(dbQueries.getSavedRequest(id), 201);
+}
+
+async function handleUpdateSaved(req: Request, path: string): Promise<Response> {
+  const id = path.replace('/api/saved/', '');
+  if (!dbQueries.getSavedRequest(id)) return notFound();
+  let body: Record<string, unknown>;
+  try { body = (await req.json()) as Record<string, unknown>; } catch { return badRequest('Invalid JSON'); }
+  const patch: Record<string, string> = {};
+  const allowed = ['name', 'folder', 'method', 'url', 'headers', 'params', 'body', 'body_type', 'raw_type', 'form_rows', 'auth', 'notes'] as const;
+  for (const key of allowed) {
+    if (key in body) patch[key] = typeof body[key] === 'string' ? String(body[key]) : JSON.stringify(body[key]);
+  }
+  if (Object.keys(patch).length) dbQueries.updateSavedRequest(id, patch);
+  return json(dbQueries.getSavedRequest(id));
+}
+
+function handleDeleteSaved(path: string): Response {
+  const id = path.replace('/api/saved/', '');
+  if (!dbQueries.getSavedRequest(id)) return notFound();
+  dbQueries.deleteSavedRequest(id);
+  return json({ ok: true });
 }

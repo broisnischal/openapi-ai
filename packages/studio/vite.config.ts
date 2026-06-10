@@ -17,10 +17,6 @@ const config = defineConfig({
       '@tanstack/react-hotkeys',
     ],
   },
-  ssr: {
-    // Hotkeys are browser-only — never pull them into the SSR worker bundle.
-    external: ['@tanstack/react-hotkeys', '@tanstack/react-store'],
-  },
   plugins: [
     devtools(),
     cloudflare({ viteEnvironment: { name: 'ssr' } }),
