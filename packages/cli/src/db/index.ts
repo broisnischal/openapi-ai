@@ -325,6 +325,28 @@ export const dbQueries = {
   setSetting: (key: string, value: string): void => {
     db.run('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', [key, value]);
   },
+
+  // ── Chat memory ────────────────────────────────────────────────────────────
+  saveMemory: (role: string, content: string): void => {
+    db.query('INSERT INTO chat_memory (role, content) VALUES (?, ?)').run(role, content);
+  },
+
+  getMemory: (limit = 20): { role: string; content: string }[] => {
+    const rows = db.query<{ role: string; content: string }, [number]>(
+      'SELECT role, content FROM chat_memory ORDER BY created_at DESC LIMIT ?'
+    ).all(limit) as { role: string; content: string }[];
+    return rows.reverse(); // oldest first for context
+  },
+
+  clearMemory: (): void => {
+    db.query('DELETE FROM chat_memory').run();
+  },
+
+  trimMemory: (keepLast = 40): void => {
+    db.query(
+      'DELETE FROM chat_memory WHERE id NOT IN (SELECT id FROM chat_memory ORDER BY created_at DESC LIMIT ?)'
+    ).run(keepLast);
+  },
 };
 
 export { randomUUID };

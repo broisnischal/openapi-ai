@@ -51,6 +51,8 @@ export async function apiRouter(req: Request): Promise<Response> {
   if (path.startsWith('/api/intercept/') && method === 'PUT') return handleUpdateRule(req, path);
   if (path.startsWith('/api/intercept/') && method === 'DELETE') return handleDeleteRule(path);
   if (path === '/api/ai/chat' && method === 'POST') return handleAiChat(req);
+  if (path === '/api/ai/memory' && method === 'GET') return json({ memory: dbQueries.getMemory(40) });
+  if (path === '/api/ai/memory' && method === 'DELETE') { dbQueries.clearMemory(); return json({ success: true }); }
   if (path === '/api/debug/dns' && method === 'GET') return handleDnsQuery(searchParams);
   if (path === '/api/debug/ping' && method === 'GET') return handlePing(searchParams);
   if (path === '/api/reload' && method === 'POST') return handleReload();
@@ -318,14 +320,16 @@ const TOOL_DEFS = {
     required: ['name'],
   },
   save_auth_token: {
-    description: 'Save a bearer token or API key as a named auth profile and immediately activate it. Call this right after a successful login endpoint returns a token so all subsequent API requests are authenticated.',
+    description: 'Save a bearer token, API key, or basic auth credentials as a named auth profile and immediately activate it. Call this right after a successful login endpoint returns a token so all subsequent API requests are authenticated.',
     params: {
       name: { type: 'string', description: 'Profile name, e.g. "user session" or the username' },
-      token: { type: 'string', description: 'The bearer token or API key value to save' },
-      token_type: { type: 'string', enum: ['bearer', 'apikey_header', 'apikey_query'], description: 'Token type (default: bearer)' },
+      token: { type: 'string', description: 'The bearer token or API key value (omit for basic auth)' },
+      token_type: { type: 'string', enum: ['bearer', 'apikey_header', 'apikey_query', 'basic'], description: 'Token type (default: bearer)' },
       header_name: { type: 'string', description: 'Header name for apikey_header type (default: X-Api-Key)' },
+      username: { type: 'string', description: 'Username for basic auth' },
+      password: { type: 'string', description: 'Password for basic auth' },
     },
-    required: ['name', 'token'],
+    required: ['name'],
   },
 };
 
@@ -342,10 +346,20 @@ const OPENAI_TOOLS = Object.entries(TOOL_DEFS).map(([name, def]) => ({
 
 // ─── Tool executor ────────────────────────────────────────────────────────────
 
-async function executeTool(name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> {
+// Enforce a minimum gap between execute_api_request calls to avoid hammering the target API
+let _lastApiCallMs = 0;
+const MIN_API_CALL_INTERVAL_MS = 400;
+
+async function executeTool(
+  name: string,
+  args: Record<string, unknown>,
+  cache: Map<string, string> = new Map(),
+): Promise<{ text: string; isError: boolean }> {
   const { operations, spec } = getState();
 
   if (name === 'search_endpoints') {
+    const cacheKey = `search:${String(args.query ?? '').toLowerCase()}`;
+    if (cache.has(cacheKey)) return { text: cache.get(cacheKey)!, isError: false };
     const q = String(args.query ?? '').toLowerCase();
     const terms = q.split(/\s+/).filter(Boolean);
     const matches = operations
@@ -355,24 +369,36 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       })
       .slice(0, 30)
       .map(op => ({ operationId: op.operationId, method: op.method.toUpperCase(), path: op.path, summary: op.summary ?? null, tags: op.tags }));
-    if (!matches.length) return { text: `No endpoints found matching "${args.query}". Total: ${operations.length}.`, isError: false };
-    return { text: JSON.stringify({ count: matches.length, total: operations.length, endpoints: matches }, null, 2), isError: false };
+    const text = !matches.length
+      ? `No endpoints found matching "${args.query}". Total: ${operations.length}.`
+      : JSON.stringify({ count: matches.length, total: operations.length, endpoints: matches }, null, 2);
+    cache.set(cacheKey, text);
+    return { text, isError: false };
   }
 
   if (name === 'get_endpoint_schema') {
+    const cacheKey = `schema:${String(args.operationId ?? '')}`;
+    if (cache.has(cacheKey)) return { text: cache.get(cacheKey)!, isError: false };
     const op = operations.find(o => o.operationId === args.operationId);
     if (!op) return { text: `Endpoint not found: "${args.operationId}"`, isError: true };
-    return {
-      text: JSON.stringify({
-        operationId: op.operationId, method: op.method.toUpperCase(), path: op.path,
-        summary: op.summary ?? null, description: op.description ?? null, tags: op.tags,
-        parameters: op.parameters, requestBody: op.requestBody ?? null, responses: op.responses,
-      }, null, 2),
-      isError: false,
-    };
+    const text = JSON.stringify({
+      operationId: op.operationId, method: op.method.toUpperCase(), path: op.path,
+      summary: op.summary ?? null, description: op.description ?? null, tags: op.tags,
+      parameters: op.parameters, requestBody: op.requestBody ?? null, responses: op.responses,
+    }, null, 2);
+    cache.set(cacheKey, text);
+    return { text, isError: false };
   }
 
   if (name === 'execute_api_request') {
+    // Throttle: enforce minimum gap between API calls to avoid 429s
+    const now = Date.now();
+    const gap = now - _lastApiCallMs;
+    if (gap < MIN_API_CALL_INTERVAL_MS) {
+      await new Promise(r => setTimeout(r, MIN_API_CALL_INTERVAL_MS - gap));
+    }
+    _lastApiCallMs = Date.now();
+
     const op = operations.find(o => o.operationId === args.operationId);
     if (!op) return { text: `Endpoint not found: "${args.operationId}"`, isError: true };
     const blocked = readonlyViolation(op.method);
@@ -538,9 +564,26 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
 
   if (name === 'save_auth_token') {
     const profileName = String(args.name ?? 'AI Login').trim();
-    const token = String(args.token ?? '').trim();
-    if (!token) return { text: 'Error: token is required', isError: true };
     const tokenType = String(args.token_type ?? 'bearer');
+
+    // Basic auth path
+    if (tokenType === 'basic' || (args.username && args.password)) {
+      const username = String(args.username ?? '').trim();
+      const password = String(args.password ?? '').trim();
+      if (!username || !password) return { text: 'Error: username and password are required for basic auth', isError: true };
+      const authConfig = { type: 'basic', username, password };
+      const profileId = randomUUID();
+      try {
+        dbQueries.insertProfile({ id: profileId, name: profileName, description: 'Saved by AI', type: 'basic', config: JSON.stringify(authConfig), token_cache: null, is_active: 0 });
+        dbQueries.activateProfile(profileId);
+        return { text: JSON.stringify({ success: true, message: `Saved and activated basic auth profile "${profileName}"`, id: profileId }), isError: false };
+      } catch (e) {
+        return { text: `Error saving profile: ${e instanceof Error ? e.message : String(e)}`, isError: true };
+      }
+    }
+
+    const token = String(args.token ?? '').trim();
+    if (!token) return { text: 'Error: token is required for bearer/apikey auth', isError: true };
     const headerName = String(args.header_name ?? 'X-Api-Key');
 
     let authConfig: Record<string, string>;
@@ -593,6 +636,7 @@ const MAX_SAME_ENDPOINT_ERRORS = 3;
 
 async function anthropicAgentLoop(
   apiKey: string, model: string, system: string, initialMessages: Msg[], emit: Emit,
+  toolCache: Map<string, string> = new Map(),
 ): Promise<{ content: string; toolCalls: ToolCall[] }> {
   const msgs: Msg[] = [...initialMessages];
   const toolCalls: ToolCall[] = [];
@@ -677,7 +721,7 @@ async function anthropicAgentLoop(
       if (block.type !== 'tool_use' || !block.id || !block.name) continue;
       totalTools++;
       emit({ type: 'tool_start', tool: block.name, input: block.input ?? {} });
-      const result = await executeTool(block.name, block.input ?? {});
+      const result = await executeTool(block.name, block.input ?? {}, toolCache);
       emit({ type: 'tool_done', tool: block.name, input: block.input ?? {}, output: result.text, isError: result.isError });
       toolCalls.push({ tool: block.name, input: block.input ?? {}, output: result.text, isError: result.isError });
 
@@ -715,6 +759,7 @@ async function anthropicAgentLoop(
 async function openaiCompatibleLoop(
   base: string, apiKey: string | undefined, model: string, extraHeaders: Record<string, string>,
   system: string, initialMessages: Msg[], emit: Emit,
+  toolCache: Map<string, string> = new Map(),
 ): Promise<{ content: string; toolCalls: ToolCall[] }> {
   const msgs: Msg[] = [{ role: 'system', content: system }, ...initialMessages];
   const toolCalls: ToolCall[] = [];
@@ -812,7 +857,7 @@ async function openaiCompatibleLoop(
       try { args = JSON.parse(tc.args); } catch { /* */ }
       totalTools++;
       emit({ type: 'tool_start', tool: tc.name, input: args });
-      const result = await executeTool(tc.name, args);
+      const result = await executeTool(tc.name, args, toolCache);
       emit({ type: 'tool_done', tool: tc.name, input: args, output: result.text, isError: result.isError });
       toolCalls.push({ tool: tc.name, input: args, output: result.text, isError: result.isError });
       msgs.push({ role: 'tool', tool_call_id: tc.id, content: result.text });
@@ -844,7 +889,7 @@ async function handleAiChat(req: Request): Promise<Response> {
 
   const settingsRow = dbQueries.getSettings();
   const settings = settingsRow ? JSON.parse(settingsRow.value) : {};
-  const ai = (settings.ai ?? {}) as { provider?: string; apiKey?: string; model?: string; baseUrl?: string };
+  const ai = (settings.ai ?? {}) as { provider?: string; apiKey?: string; model?: string; baseUrl?: string; customInstructions?: string };
 
   const { spec, operations } = getState();
   const preview = operations.slice(0, 40).map(op => `- ${op.method.toUpperCase()} ${op.path}${op.summary ? `: ${op.summary}` : ''}`).join('\n');
@@ -853,18 +898,24 @@ async function handleAiChat(req: Request): Promise<Response> {
     ? `Active auth: "${activeAuth.name}" (${activeAuth.type})`
     : 'No active auth profile. If the API requires auth, call list_auth_profiles first, then set_active_auth, or login and call save_auth_token.';
 
+  // Load conversation memory (last 20 messages = ~10 exchanges)
+  const memory = dbQueries.getMemory(20);
+  const memorySection = memory.length
+    ? `\n## Memory from previous sessions\n${memory.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.slice(0, 300)}${m.content.length > 300 ? '…' : ''}`).join('\n')}\n`
+    : '';
+
   const system = `You are an AI assistant for the "${spec.title}" API (v${spec.version}). Base URL: ${spec.baseUrl}.
 Total endpoints: ${operations.length}. Sample:
 ${preview}${operations.length > 40 ? `\n... and ${operations.length - 40} more` : ''}
 
 ${authLine}
-
+${memorySection}
 Tools available:
-- search_endpoints / get_endpoint_schema: explore API structure
+- search_endpoints / get_endpoint_schema: explore API structure (results are cached — do NOT call the same query twice)
 - execute_api_request: call an endpoint
 - list_auth_profiles: list all saved auth profiles (name, type, active)
 - set_active_auth(name): switch to a saved profile before making requests
-- save_auth_token(name, token): IMMEDIATELY call this after a successful login that returns a token — saves the token as a named profile and activates it so subsequent requests are authenticated
+- save_auth_token(name, token): save bearer/API key after successful login; use token_type="basic" with username+password for HTTP Basic auth
 - fetch_url: fetch external docs
 - dns_lookup: DNS resolution / connectivity
 - get_recent_logs: recent request/response traffic
@@ -872,9 +923,13 @@ Tools available:
 
 Authentication workflow: if requests return 401/403, call list_auth_profiles first. If a profile exists, call set_active_auth. If none, find and call the login endpoint, extract the token from the response, then call save_auth_token immediately. After saving, retry the original request.
 
-IMPORTANT: if an endpoint returns an error, diagnose it (check the schema, check auth) and fix the root cause before retrying. If the same endpoint fails 3 times the agent will be forcibly stopped. Do not retry without changing something.
+IMPORTANT:
+- Do NOT re-search endpoints you already found. Use cached results.
+- If an endpoint returns an error, diagnose it (check the schema, check auth) and fix the root cause before retrying. If the same endpoint fails 3 times the agent will be forcibly stopped.
+- Do not retry without changing something.
+- Space out API calls — do not fire multiple requests in rapid succession.
 
-Be concise and practical. Format code and JSON in code blocks.${body.extra_context ? `\n\n---\n## Current context\n${body.extra_context}` : ''}`;
+Be concise and practical. Format code and JSON in code blocks.${ai.customInstructions ? `\n\n---\n## Custom instructions\n${ai.customInstructions}` : ''}${body.extra_context ? `\n\n---\n## Current context\n${body.extra_context}` : ''}`;
 
   const provider = ai.provider ?? 'anthropic';
   const requiresKey = provider !== 'ollama' && provider !== 'custom';
@@ -888,31 +943,36 @@ Be concise and practical. Format code and JSON in code blocks.${body.extra_conte
   const emit: Emit = (e) => { writer.write(enc.encode(`data: ${JSON.stringify(e)}\n\n`)).catch(() => {}); };
 
   const msgs = body.messages as Msg[];
+  const toolCache = new Map<string, string>();
+
+  // Extract the user's last message to save to memory after the response
+  const lastUserMsg = [...msgs].reverse().find(m => m.role === 'user');
+  const userMemoryContent = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : null;
 
   (async () => {
     try {
       let result: { content: string; toolCalls: ToolCall[] };
 
       if (provider === 'anthropic') {
-        result = await anthropicAgentLoop(ai.apiKey!, ai.model || 'claude-haiku-4-5-20251001', system, msgs, emit);
+        result = await anthropicAgentLoop(ai.apiKey!, ai.model || 'claude-haiku-4-5-20251001', system, msgs, emit, toolCache);
       } else if (provider === 'openai') {
         const base = (ai.baseUrl || 'https://api.openai.com').replace(/\/$/, '');
-        result = await openaiCompatibleLoop(base, ai.apiKey, ai.model || 'gpt-4o-mini', {}, system, msgs, emit);
+        result = await openaiCompatibleLoop(base, ai.apiKey, ai.model || 'gpt-4o-mini', {}, system, msgs, emit, toolCache);
       } else if (provider === 'mistral') {
         const base = (ai.baseUrl || 'https://api.mistral.ai').replace(/\/$/, '');
-        result = await openaiCompatibleLoop(base, ai.apiKey, ai.model || 'mistral-small-latest', {}, system, msgs, emit);
+        result = await openaiCompatibleLoop(base, ai.apiKey, ai.model || 'mistral-small-latest', {}, system, msgs, emit, toolCache);
       } else if (provider === 'github-copilot') {
         const base = (ai.baseUrl || 'https://api.githubcopilot.com').replace(/\/$/, '');
         result = await openaiCompatibleLoop(base, ai.apiKey, ai.model || 'gpt-4o', {
           'Copilot-Integration-Id': 'vscode-chat',
           'Editor-Version': 'vscode/1.85.0',
-        }, system, msgs, emit);
+        }, system, msgs, emit, toolCache);
       } else if (provider === 'groq') {
         const base = (ai.baseUrl || 'https://api.groq.com/openai').replace(/\/$/, '');
-        result = await openaiCompatibleLoop(base, ai.apiKey, ai.model || 'llama-3.1-70b-versatile', {}, system, msgs, emit);
+        result = await openaiCompatibleLoop(base, ai.apiKey, ai.model || 'llama-3.1-70b-versatile', {}, system, msgs, emit, toolCache);
       } else if (provider === 'custom') {
         if (!ai.baseUrl) { emit({ type: 'error', message: 'Custom provider requires a Base URL.' }); await writer.close(); return; }
-        result = await openaiCompatibleLoop(ai.baseUrl.replace(/\/$/, ''), ai.apiKey, ai.model || '', {}, system, msgs, emit);
+        result = await openaiCompatibleLoop(ai.baseUrl.replace(/\/$/, ''), ai.apiKey, ai.model || '', {}, system, msgs, emit, toolCache);
       } else if (provider === 'ollama') {
         const base = (ai.baseUrl || 'http://localhost:11434').replace(/\/$/, '');
         const res = await fetch(`${base}/api/chat`, {
@@ -940,6 +1000,15 @@ Be concise and practical. Format code and JSON in code blocks.${body.extra_conte
         emit({ type: 'error', message: `Unknown provider: ${provider}` });
         await writer.close();
         return;
+      }
+
+      // Persist to memory
+      if (result.content && result.content !== '(max iterations reached)') {
+        try {
+          if (userMemoryContent) dbQueries.saveMemory('user', userMemoryContent.slice(0, 1000));
+          dbQueries.saveMemory('assistant', result.content.slice(0, 1000));
+          dbQueries.trimMemory(40);
+        } catch { /* non-fatal */ }
       }
 
       emit({ type: 'done', content: result.content, toolCalls: result.toolCalls });
