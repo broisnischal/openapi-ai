@@ -114,11 +114,9 @@ jobs:
 
       - name: Publish to npm
         working-directory: packages/cli
-        run: |
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> ~/.npmrc
-          bun publish
+        run: bun publish --access public
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          BUN_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Download all binaries
         uses: actions/download-artifact@v4
