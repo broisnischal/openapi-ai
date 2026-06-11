@@ -15,6 +15,7 @@ import { Route as LogsRouteImport } from './routes/logs'
 import { Route as InterceptRouteImport } from './routes/intercept'
 import { Route as ExplorerRouteImport } from './routes/explorer'
 import { Route as EnvironmentsRouteImport } from './routes/environments'
+import { Route as DocsRouteImport } from './routes/docs'
 import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AiRouteImport } from './routes/ai'
@@ -50,6 +51,11 @@ const EnvironmentsRoute = EnvironmentsRouteImport.update({
   path: '/environments',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DocsRoute = DocsRouteImport.update({
+  id: '/docs',
+  path: '/docs',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConsoleRoute = ConsoleRouteImport.update({
   id: '/console',
   path: '/console',
@@ -76,6 +82,7 @@ export interface FileRoutesByFullPath {
   '/ai': typeof AiRoute
   '/auth': typeof AuthRoute
   '/console': typeof ConsoleRoute
+  '/docs': typeof DocsRoute
   '/environments': typeof EnvironmentsRoute
   '/explorer': typeof ExplorerRoute
   '/intercept': typeof InterceptRoute
@@ -88,6 +95,7 @@ export interface FileRoutesByTo {
   '/ai': typeof AiRoute
   '/auth': typeof AuthRoute
   '/console': typeof ConsoleRoute
+  '/docs': typeof DocsRoute
   '/environments': typeof EnvironmentsRoute
   '/explorer': typeof ExplorerRoute
   '/intercept': typeof InterceptRoute
@@ -101,6 +109,7 @@ export interface FileRoutesById {
   '/ai': typeof AiRoute
   '/auth': typeof AuthRoute
   '/console': typeof ConsoleRoute
+  '/docs': typeof DocsRoute
   '/environments': typeof EnvironmentsRoute
   '/explorer': typeof ExplorerRoute
   '/intercept': typeof InterceptRoute
@@ -115,6 +124,7 @@ export interface FileRouteTypes {
     | '/ai'
     | '/auth'
     | '/console'
+    | '/docs'
     | '/environments'
     | '/explorer'
     | '/intercept'
@@ -127,6 +137,7 @@ export interface FileRouteTypes {
     | '/ai'
     | '/auth'
     | '/console'
+    | '/docs'
     | '/environments'
     | '/explorer'
     | '/intercept'
@@ -139,6 +150,7 @@ export interface FileRouteTypes {
     | '/ai'
     | '/auth'
     | '/console'
+    | '/docs'
     | '/environments'
     | '/explorer'
     | '/intercept'
@@ -152,6 +164,7 @@ export interface RootRouteChildren {
   AiRoute: typeof AiRoute
   AuthRoute: typeof AuthRoute
   ConsoleRoute: typeof ConsoleRoute
+  DocsRoute: typeof DocsRoute
   EnvironmentsRoute: typeof EnvironmentsRoute
   ExplorerRoute: typeof ExplorerRoute
   InterceptRoute: typeof InterceptRoute
@@ -204,6 +217,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EnvironmentsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/docs': {
+      id: '/docs'
+      path: '/docs'
+      fullPath: '/docs'
+      preLoaderRoute: typeof DocsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/console': {
       id: '/console'
       path: '/console'
@@ -240,6 +260,7 @@ const rootRouteChildren: RootRouteChildren = {
   AiRoute: AiRoute,
   AuthRoute: AuthRoute,
   ConsoleRoute: ConsoleRoute,
+  DocsRoute: DocsRoute,
   EnvironmentsRoute: EnvironmentsRoute,
   ExplorerRoute: ExplorerRoute,
   InterceptRoute: InterceptRoute,

@@ -75,7 +75,7 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
 
     const resize = (el: HTMLTextAreaElement) => {
       el.style.height = 'auto';
-      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+      el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
     };
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -114,9 +114,9 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
                   onKeyDown={handleKeyDown}
                   disabled={loading}
                   placeholder={loading ? 'Thinking…' : placeholder}
-                  rows={1}
+                  rows={2}
                   autoFocus
-                  className="w-full min-h-[22px] max-h-[160px] resize-none bg-transparent text-[13px] leading-relaxed text-[var(--foreground)] outline-none placeholder:text-[var(--placeholder-foreground)] disabled:opacity-60"
+                  className="w-full min-h-[42px] max-h-[220px] resize-none bg-transparent text-[13px] leading-relaxed text-[var(--foreground)] outline-none placeholder:text-[var(--placeholder-foreground)] disabled:opacity-60"
                   onInput={(e) => resize(e.currentTarget)}
                 />
               </div>

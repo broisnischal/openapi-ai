@@ -61,6 +61,8 @@ export interface HarnessConfig {
   baseUrl?: string;
   extraHeaders?: Record<string, string>;
   maxTokens?: number;
+  temperature?: number;
+  topK?: number;
   maxIterations?: number;
   maxTotalTools?: number;
   maxConsecutiveErrors?: number;
@@ -263,6 +265,8 @@ async function streamAnthropic(
       body: JSON.stringify({
         model: cfg.model,
         max_tokens: cfg.maxTokens,
+        temperature: cfg.temperature,
+        ...(cfg.topK > 0 ? { top_k: cfg.topK } : {}),
         system: systemContent,
         messages,
         tools,
@@ -379,6 +383,7 @@ async function streamOpenAI(
       body: JSON.stringify({
         model: cfg.model,
         max_tokens: cfg.maxTokens,
+        temperature: cfg.temperature,
         messages: [{ role: 'system', content: system }, ...messages],
         tools,
         tool_choice: 'auto',
@@ -523,6 +528,8 @@ const DEFAULTS: Required<Omit<HarnessConfig, 'provider' | 'model'>> = {
   baseUrl: '',
   extraHeaders: {},
   maxTokens: 4096,
+  temperature: 1.0,
+  topK: 0,
   maxIterations: 40,
   maxTotalTools: 40,
   maxConsecutiveErrors: 5,

@@ -1,4 +1,4 @@
-import { HeadContent, Outlet, Scripts, createRootRoute } from '@tanstack/react-router';
+import { HeadContent, Outlet, Scripts, createRootRoute, useRouterState } from '@tanstack/react-router';
 import { useEffect, useState, useRef } from 'react';
 import { Sidebar } from '../components/Sidebar';
 import { CommandPalette } from '../components/CommandPalette';
@@ -48,11 +48,128 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 
 Route.update({ component: AppShell });
 
+type InstallTab = 'curl' | 'npm' | 'bun';
+
+// Shell syntax tokenizer
+type ShToken = { text: string; color: string };
+function tokenizeShell(line: string): ShToken[] {
+  const out: ShToken[] = [];
+  const parts = line.split(/(\s+|(?=\|))/);
+  let first = true;
+  for (const p of parts) {
+    if (!p) continue;
+    if (/^\s+$/.test(p)) { out.push({ text: p, color: 'inherit' }); continue; }
+    if (p === '|') { out.push({ text: p, color: '#f472b6' }); continue; }
+    if (/^https?:\/\//.test(p)) { out.push({ text: p, color: '#a3a3a3' }); continue; }
+    if (/^--?[a-z]/.test(p)) { out.push({ text: p, color: '#60a5fa' }); continue; }
+    if (/^<.+>$/.test(p)) { out.push({ text: p, color: '#525252' }); continue; }
+    if (!first && /^(sh|bash|zsh)$/.test(p)) { out.push({ text: p, color: '#4ade80' }); continue; }
+    if (first) { out.push({ text: p, color: '#e5e5e5' }); first = false; continue; }
+    out.push({ text: p, color: '#a3a3a3' });
+  }
+  return out;
+}
+
+interface ShellTabDef { id: string; label: string; badge?: string }
+
+function ShellBlock({ code, tabs, activeTab, onTabChange }: {
+  code: string;
+  tabs?: ShellTabDef[];
+  activeTab?: string;
+  onTabChange?: (id: string) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    });
+  };
+
+  return (
+    <div style={{
+      marginTop: 10, borderRadius: 10, overflow: 'hidden',
+      border: '1px solid rgba(255,255,255,0.08)',
+      background: '#0a0a0a',
+    }}>
+      {/* Tab bar */}
+      <div style={{
+        display: 'flex', alignItems: 'center',
+        borderBottom: '1px solid rgba(255,255,255,0.06)',
+        paddingLeft: 4,
+      }}>
+        {tabs?.map(t => (
+          <button
+            key={t.id}
+            onClick={() => onTabChange?.(t.id)}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '9px 10px 8px',
+              fontSize: 12.5, fontFamily: 'inherit',
+              color: activeTab === t.id ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.35)',
+              fontWeight: activeTab === t.id ? 500 : 400,
+              borderBottom: activeTab === t.id ? '1.5px solid rgba(255,255,255,0.7)' : '1.5px solid transparent',
+              marginBottom: -1,
+              display: 'flex', alignItems: 'center', gap: 6,
+              transition: 'color 0.12s',
+            }}
+          >
+            {t.label}
+            {t.badge && (
+              <span style={{
+                fontSize: 10, padding: '1px 6px', borderRadius: 99,
+                background: 'rgba(34,197,94,0.12)', color: '#22c55e',
+                border: '1px solid rgba(34,197,94,0.2)',
+              }}>
+                {t.badge}
+              </span>
+            )}
+          </button>
+        ))}
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={copy}
+          title={copied ? 'Copied!' : 'Copy'}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            padding: '8px 12px', color: copied ? '#22c55e' : 'rgba(255,255,255,0.25)',
+            display: 'flex', alignItems: 'center', transition: 'color 0.15s',
+          }}
+        >
+          {copied
+            ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+            : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+          }
+        </button>
+      </div>
+      {/* Code body */}
+      <div style={{ padding: '14px 16px' }}>
+        {code.split('\n').map((ln, i) => (
+          <div key={i} style={{ fontFamily: '"JetBrains Mono","Fira Code","Cascadia Code",monospace', fontSize: 13, lineHeight: 1.75 }}>
+            <span style={{ color: '#404040', userSelect: 'none' }}>$ </span>
+            {tokenizeShell(ln).map((t, j) => (
+              <span key={j} style={{ color: t.color }}>{t.text}</span>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const STEP_DOT_STYLE: React.CSSProperties = {
+  position: 'absolute', left: -30, top: 4,
+  width: 12, height: 12, borderRadius: '50%',
+  border: '1.5px solid rgba(255,255,255,0.15)',
+  background: '#111', display: 'flex', alignItems: 'center', justifyContent: 'center',
+};
+
 function OfflineCard() {
   const currentUrl = getCliUrl();
   const [urlInput, setUrlInput] = useState(currentUrl);
   const [tokenInput, setTokenInput] = useState(getCliToken() ?? '');
-  const [showUrlEdit, setShowUrlEdit] = useState(false);
+  const [showConnect, setShowConnect] = useState(currentUrl !== 'http://localhost:3388');
+  const [installTab, setInstallTab] = useState<InstallTab>('curl');
   const isUnsafeMix = typeof window !== 'undefined'
     && window.location.protocol === 'https:'
     && urlInput.startsWith('http:')
@@ -62,111 +179,181 @@ function OfflineCard() {
   const save = () => { setCliUrl(urlInput); setCliToken(tokenInput.trim()); window.location.reload(); };
   const reset = () => { clearCliUrl(); clearCliToken(); window.location.reload(); };
 
+  const INSTALL_TABS: ShellTabDef[] = [
+    { id: 'curl', label: 'curl', badge: 'recommended' },
+    { id: 'npm', label: 'npm' },
+    { id: 'bun', label: 'bun' },
+  ];
+
+  const INSTALL_CODE: Record<InstallTab, string> = {
+    curl: 'curl -fsSL https://studio.stroke.click/install.sh | sh',
+    npm: 'npm install -g wasper-cli',
+    bun: 'bun add -g wasper-cli',
+  };
+
   return (
     <div className="offline-overlay">
-      <div className="w-full max-w-[800px] px-6">
+      <div style={{ maxWidth: 600, width: '100%' }}>
 
-        {/* Header */}
-        <div className="mb-10">
-          <h1 className="text-[26px] font-bold leading-snug tracking-tight text-[var(--foreground)]">
-            Hey 👋<br />Welcome to Wasper Studio
+        {/* Logo + Title */}
+        <div style={{ marginBottom: 48 }}>
+          <div style={{
+            width: 44, height: 44, borderRadius: 12, marginBottom: 20,
+            background: 'color-mix(in srgb, var(--foreground) 92%, transparent)',
+            boxShadow: '0 0 0 1px color-mix(in srgb, var(--foreground) 12%, transparent), 0 8px 24px color-mix(in srgb, var(--foreground) 10%, transparent)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--background)" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
+            </svg>
+          </div>
+          <h1 style={{ fontSize: 26, fontWeight: 700, lineHeight: 1.25, margin: 0, color: 'var(--foreground)' }}>
+            Get started with Wasper Studio
           </h1>
-          <div className="mt-3 flex items-center gap-2.5 text-[13.5px] text-[var(--muted-foreground)]">
-            Connecting to the CLI on{' '}
-            <code className="rounded-md border border-[var(--border)] bg-[var(--elevated)] px-2 py-0.5 font-mono text-[12px] text-[var(--foreground)]">
+          <p style={{ marginTop: 8, fontSize: 14, color: 'var(--muted-foreground)', lineHeight: 1.6, margin: '8px 0 0' }}>
+            Follow the steps below to connect the studio to your OpenAPI spec.
+          </p>
+          <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--muted-foreground)' }}>
+            Connecting to{' '}
+            <code style={{
+              fontFamily: 'monospace', fontSize: 12,
+              background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: 5, padding: '2px 7px', color: 'rgba(255,255,255,0.8)',
+            }}>
               {currentUrl}
             </code>
             <span className="connecting-dots"><span /><span /><span /></span>
           </div>
         </div>
 
-        {/* Two-column */}
-        <div className="grid grid-cols-2 gap-16">
+        {/* Stepper */}
+        <div style={{ position: 'relative', paddingLeft: 32 }}>
+          {/* Vertical line */}
+          <div style={{
+            position: 'absolute', left: 5, top: 4, bottom: 4, width: 1,
+            background: 'rgba(255,255,255,0.07)',
+          }} />
 
-          {/* Left: CLI instructions */}
-          <div>
-            <div className="mb-4 flex size-11 items-center justify-center rounded-xl"
-              style={{ background: 'linear-gradient(135deg, #166534 0%, #15803d 100%)', boxShadow: '0 2px 8px rgba(22,101,52,0.4)' }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
-              </svg>
-            </div>
-            <h2 className="mb-2 text-[15px] font-bold tracking-tight text-[var(--foreground)]">wasper-cli</h2>
-            <p className="mb-4 text-[13.5px] leading-relaxed text-[var(--muted-foreground)]">
-              Make sure the CLI is up and running
+          {/* ── Step 1: Install ── */}
+          <div style={{ position: 'relative', marginBottom: 44 }}>
+            <div style={STEP_DOT_STYLE} />
+            <h2 style={{ fontSize: 16, fontWeight: 600, color: 'var(--foreground)', margin: '0 0 4px' }}>
+              Install the CLI
+            </h2>
+            <p style={{ fontSize: 13.5, color: 'var(--muted-foreground)', margin: 0, lineHeight: 1.5 }}>
+              Choose your preferred install method
             </p>
-            <div className="flex flex-col gap-2 text-[13px] text-[var(--muted-foreground)]">
-              <span>1. Install the CLI globally:</span>
-              <code className="inline-block rounded-lg border border-[var(--border)] bg-[var(--elevated)] px-3 py-2 font-mono text-[12.5px] text-[var(--foreground)]">
-                npm i -g wasper-cli
-              </code>
-              <span className="mt-1">2. Start the CLI with your spec:</span>
-              <code className="inline-block rounded-lg border border-[var(--border)] bg-[var(--elevated)] px-3 py-2 font-mono text-[12.5px] text-[var(--foreground)]">
-                wasper --url &lt;spec-url&gt;
-              </code>
-            </div>
-            <p className="mt-5 text-[13.5px] leading-relaxed text-[var(--muted-foreground)]">
-              Still experiencing issues?{' '}
-              <button
-                onClick={() => window.open('https://github.com/broisnischal/wasper/issues', '_blank')}
-                className="border-0 bg-transparent p-0 font-sans text-[13.5px] cursor-pointer text-[var(--primary)] underline underline-offset-2"
-              >
-                Open an issue on GitHub
-              </button>
+            <ShellBlock
+              tabs={INSTALL_TABS}
+              activeTab={installTab}
+              onTabChange={id => setInstallTab(id as InstallTab)}
+              code={INSTALL_CODE[installTab]}
+            />
+            <p style={{ marginTop: 8, fontSize: 12, color: 'rgba(255,255,255,0.3)', lineHeight: 1.5 }}>
+              {installTab === 'curl'
+                ? 'Standalone binary — no bun or node required.'
+                : <>Requires <strong style={{ color: 'rgba(255,255,255,0.5)' }}>bun</strong> to be installed.{' '}
+                  <button onClick={() => window.open('https://bun.sh', '_blank')} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--primary)', fontSize: 12, textDecoration: 'underline', fontFamily: 'inherit' }}>
+                    Install bun →
+                  </button>
+                </>
+              }
             </p>
           </div>
 
-          {/* Right: Custom URL */}
-          <div>
-            <div className="mb-4 flex size-11 items-center justify-center rounded-xl"
-              style={{ background: 'linear-gradient(135deg, #1e3a5f 0%, #1d4ed8 100%)', boxShadow: '0 2px 8px rgba(29,78,216,0.35)' }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" />
-                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-              </svg>
-            </div>
-            <h2 className="mb-2 text-[15px] font-bold tracking-tight text-[var(--foreground)]">Using a remote or custom URL?</h2>
-            <p className="mb-4 text-[13.5px] leading-relaxed text-[var(--muted-foreground)]">
-              By default the studio connects to{' '}
-              <code className="rounded bg-[var(--elevated)] px-1.5 py-0.5 font-mono text-[12px]">localhost:3388</code>.
-              If your CLI is running elsewhere, update the URL below.
+          {/* ── Step 2: Run ── */}
+          <div style={{ position: 'relative', marginBottom: 44 }}>
+            <div style={STEP_DOT_STYLE} />
+            <h2 style={{ fontSize: 16, fontWeight: 600, color: 'var(--foreground)', margin: '0 0 4px' }}>
+              Start the server
+            </h2>
+            <p style={{ fontSize: 13.5, color: 'var(--muted-foreground)', margin: 0, lineHeight: 1.5 }}>
+              Point the CLI at your OpenAPI spec URL
             </p>
-            {!showUrlEdit ? (
-              <button onClick={() => setShowUrlEdit(true)}
-                className="border-0 bg-transparent p-0 font-sans text-[13.5px] cursor-pointer text-[var(--primary)] underline underline-offset-2">
-                Change CLI URL
+            <ShellBlock code="wasper --url https://petstore3.swagger.io/api/v3/openapi.json" />
+          </div>
+
+          {/* ── Step 3: Connect ── */}
+          <div style={{ position: 'relative' }}>
+            <div style={STEP_DOT_STYLE} />
+            <h2 style={{ fontSize: 16, fontWeight: 600, color: 'var(--foreground)', margin: '0 0 4px' }}>
+              Connect the studio
+            </h2>
+            <p style={{ fontSize: 13.5, color: 'var(--muted-foreground)', margin: 0, lineHeight: 1.6 }}>
+              By default connects to{' '}
+              <code style={{ fontFamily: 'monospace', fontSize: 12, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 4, padding: '1px 5px' }}>
+                localhost:3388
+              </code>
+              . Running on a different host?
+            </p>
+
+            {!showConnect ? (
+              <button
+                onClick={() => setShowConnect(true)}
+                style={{
+                  marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 6,
+                  background: 'rgba(255,255,255,0.05)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: 8, padding: '8px 16px', cursor: 'pointer',
+                  fontSize: 13, color: 'rgba(255,255,255,0.75)', fontFamily: 'inherit',
+                  transition: 'background 0.12s, border-color 0.12s',
+                }}
+              >
+                Configure CLI URL
               </button>
             ) : (
-              <div className="flex flex-col gap-2">
-                <input className="input font-mono text-[12.5px]" value={urlInput}
+              <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <input
+                  className="input font-mono text-[12.5px]"
+                  value={urlInput}
                   onChange={e => setUrlInput(e.target.value)}
                   placeholder="http://localhost:3388"
-                  onKeyDown={e => e.key === 'Enter' && save()} />
-                <input className="input font-mono text-[12.5px]" type="password" value={tokenInput}
+                  onKeyDown={e => e.key === 'Enter' && save()}
+                />
+                <input
+                  className="input font-mono text-[12.5px]"
+                  type="password"
+                  value={tokenInput}
                   onChange={e => setTokenInput(e.target.value)}
                   placeholder="Access token (optional — for --token servers)"
-                  onKeyDown={e => e.key === 'Enter' && save()} />
+                  onKeyDown={e => e.key === 'Enter' && save()}
+                />
                 {isUnsafeMix && (
-                  <div className="text-[12px] leading-relaxed text-[var(--warning)]">
-                    ⚠ Browsers block HTTP→non-localhost from HTTPS pages. Use <strong>https://</strong> or <strong>localhost</strong>.
-                  </div>
+                  <p style={{ margin: 0, fontSize: 12, color: 'var(--warning)' }}>
+                    ⚠ Browsers block HTTP→non-localhost from HTTPS pages.
+                  </p>
                 )}
-                <div className="flex gap-2">
-                  <button className="btn btn-primary flex-1" onClick={save}>Connect</button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>Connect</button>
                   {currentUrl !== 'http://localhost:3388' && (
                     <button className="btn btn-ghost" onClick={reset}>Reset</button>
                   )}
                 </div>
               </div>
             )}
-            <div className="mt-5 flex flex-col gap-2 text-[13px] text-[var(--muted-foreground)]">
-              <span>1. Start the CLI with a custom port:</span>
-              <code className="inline-block rounded-lg border border-[var(--border)] bg-[var(--elevated)] px-3 py-2 font-mono text-[12.5px] text-[var(--foreground)]">
-                wasper --port 4000
-              </code>
-              <span>2. Enter the URL above and click Connect</span>
-            </div>
+
+            <p style={{ marginTop: 16, fontSize: 13, color: 'var(--muted-foreground)', marginBottom: 6 }}>
+              Self-hosted server with token auth:
+            </p>
+            <ShellBlock code="wasper --url <spec-url> --token my-secret" />
           </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          marginTop: 44, paddingTop: 20,
+          borderTop: '1px solid rgba(255,255,255,0.06)',
+          display: 'flex', gap: 16, fontSize: 13, color: 'rgba(255,255,255,0.35)',
+        }}>
+          <button
+            onClick={() => window.open('https://github.com/broisnischal/wasper/issues', '_blank')}
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'rgba(255,255,255,0.35)', fontSize: 13, textDecoration: 'underline', fontFamily: 'inherit' }}
+          >
+            Open an issue
+          </button>
+          <a href="/docs" style={{ color: 'rgba(255,255,255,0.35)', textDecoration: 'underline', fontSize: 13 }}>
+            Docs
+          </a>
         </div>
       </div>
     </div>
@@ -175,8 +362,14 @@ function OfflineCard() {
 
 interface ParsedOp { operationId: string; method: string; path: string; summary?: string; tags: string[]; }
 
+// Routes that render without a CLI connection
+const PUBLIC_ROUTES = ['/docs'];
+
 // ── App shell ──────────────────────────────────────────────────────────────
 function AppShell() {
+  const pathname = useRouterState({ select: s => s.location.pathname });
+  const isPublic = PUBLIC_ROUTES.some(r => pathname === r || pathname.startsWith(r + '/'));
+
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [cmdOpen, setCmdOpen] = useState(false);
   const [connected, setConnected] = useState<boolean | null>(null);
@@ -321,8 +514,8 @@ function AppShell() {
     window.dispatchEvent(new CustomEvent('cmd-open-endpoint', { detail: op }));
   };
 
-  // Loading state: null = still checking
-  if (connected === null) {
+  // Loading state: null = still checking (skip for public routes)
+  if (connected === null && !isPublic) {
     return (
       <div className="flex h-screen flex-col items-center justify-center bg-[var(--background)]" style={{ animation: 'fade-in 0.2s ease' }}>
         <div className="flex flex-col items-center gap-5 text-center">
@@ -345,24 +538,32 @@ function AppShell() {
 
   const main = (
     <>
-      {connected === false && <OfflineCard />}
-
-      <div className={`flex h-screen overflow-hidden transition-opacity duration-200 ${connected ? 'opacity-100' : 'opacity-0'}`}>
-        <Sidebar />
-        <main className="flex-1 min-w-0 overflow-hidden bg-[var(--background)] flex flex-col">
+      {isPublic ? (
+        // Public routes (e.g. /docs): full-screen, no app sidebar, no connection gate
+        <div className="h-screen w-screen overflow-hidden bg-[var(--background)]">
           <Outlet />
-        </main>
-      </div>
+        </div>
+      ) : (
+        <>
+          {connected === false && <OfflineCard />}
 
-      <CommandPalette
-        open={cmdOpen}
-        onClose={() => setCmdOpen(false)}
-        operations={operations}
-        onSelect={handleCmdSelect}
-      />
+          <div className={`flex h-screen overflow-hidden transition-opacity duration-200 ${connected ? 'opacity-100' : 'opacity-0'}`}>
+            <Sidebar />
+            <main className="flex-1 min-w-0 overflow-hidden bg-[var(--background)] flex flex-col">
+              <Outlet />
+            </main>
+          </div>
 
-      <HotkeyHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
-      <AiPanel open={aiPanelOpen} onClose={() => setAiPanelOpen(false)} />
+          <CommandPalette
+            open={cmdOpen}
+            onClose={() => setCmdOpen(false)}
+            operations={operations}
+            onSelect={handleCmdSelect}
+          />
+          <HotkeyHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
+          <AiPanel open={aiPanelOpen} onClose={() => setAiPanelOpen(false)} />
+        </>
+      )}
     </>
   );
 

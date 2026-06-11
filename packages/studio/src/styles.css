@@ -679,8 +679,9 @@
   /* ── Offline / loading ────────────────────────── */
   .offline-overlay {
     position: fixed; inset: 0; z-index: 900; background: var(--background);
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
     animation: fade-in 0.2s ease; overflow-y: auto;
+    padding: clamp(60px, 18vh, 140px) 20px 80px;
   }
 
   .connecting-dots { display: inline-flex; align-items: center; gap: 4px; }

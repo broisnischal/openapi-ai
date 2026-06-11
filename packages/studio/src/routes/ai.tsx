@@ -240,7 +240,7 @@ function LoadingBubble({
         {streamingContent ? (
           <div>
             <Markdown content={streamingContent} />
-            <span className="streaming-cursor" />
+            <span style={{ display: 'inline-block', width: 7, height: 13, background: 'var(--foreground)', borderRadius: 1, opacity: 0.65, verticalAlign: 'text-bottom', marginLeft: 2, animation: 'cursor-blink 1s ease-in-out infinite' }} />
           </div>
         ) : phase === 'thinking' ? (
           <div className="flex items-center gap-2 text-[12px] text-[var(--muted-foreground)]">
@@ -317,30 +317,69 @@ function HistoryPanel({
 
 // ─── Starter prompts ──────────────────────────────────────────────────────────
 
-const STARTER_GROUPS = [
-  {
-    label: 'API',
-    items: [
-      { label: 'Show all GET endpoints',        icon: <Search className="size-3.5" /> },
-      { label: 'How do I authenticate?',         icon: <FileCode className="size-3.5" /> },
-      { label: 'Test the health check endpoint', icon: <Terminal className="size-3.5" /> },
-      { label: 'Check for security issues',      icon: <AlertTriangle className="size-3.5" /> },
-      { label: 'Generate a code example',        icon: <FileCode className="size-3.5" /> },
-      { label: 'Find the create user endpoint',  icon: <Search className="size-3.5" /> },
-    ],
-  },
-  {
-    label: 'Network',
-    items: [
-      { label: 'Ping the API server',            icon: <Plug className="size-3.5" /> },
-      { label: 'DNS lookup for the API host',    icon: <Wifi className="size-3.5" /> },
-      { label: 'Dig MX records for this domain', icon: <Wifi className="size-3.5" /> },
-      { label: 'Is the API reachable on port 443?', icon: <Activity className="size-3.5" /> },
-      { label: 'Show recent errors in the logs', icon: <Activity className="size-3.5" /> },
-      { label: 'Check TLS / SSL for the host',   icon: <Globe className="size-3.5" /> },
-    ],
-  },
+const STARTERS: { label: string; desc: string; icon: React.ReactNode; color: string }[] = [
+  { label: 'List all endpoints',        desc: 'Browse every route in the spec',        icon: <Search className="size-3.5" />,       color: '#3b82f6' },
+  { label: 'How do I authenticate?',    desc: 'Find auth flows and token endpoints',    icon: <Shield className="size-3.5" />,       color: '#a78bfa' },
+  { label: 'Run a health check',        desc: 'Call the health / status endpoint',      icon: <Activity className="size-3.5" />,     color: '#34d399' },
+  { label: 'Check for security issues', desc: 'Scan for common API vulnerabilities',   icon: <AlertTriangle className="size-3.5" />, color: '#fbbf24' },
+  { label: 'Ping the API server',       desc: 'Test connectivity to the host',         icon: <Plug className="size-3.5" />,         color: '#4ade80' },
+  { label: 'DNS lookup for API host',   desc: 'Resolve DNS records for the domain',    icon: <Wifi className="size-3.5" />,         color: '#38bdf8' },
+  { label: 'Generate a code example',   desc: 'Get a working snippet for an endpoint', icon: <FileCode className="size-3.5" />,     color: '#818cf8' },
+  { label: 'Show recent log errors',    desc: 'Tail the proxy logs for failures',      icon: <Terminal className="size-3.5" />,     color: '#f87171' },
 ];
+
+// ─── StarterCard ─────────────────────────────────────────────────────────────
+
+function StarterCard({
+  s, onSend,
+}: { s: typeof STARTERS[number]; onSend: (t: string) => void }) {
+  const [hov, setHov] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => onSend(s.label)}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      className="group relative flex cursor-pointer items-center gap-3 rounded-2xl p-3.5 text-left transition-all duration-150 active:scale-[0.975]"
+      style={{
+        border: `1px solid ${hov ? `${s.color}40` : 'color-mix(in srgb, var(--foreground) 8%, transparent)'}`,
+        background: hov
+          ? `color-mix(in srgb, ${s.color} 6%, var(--background))`
+          : 'color-mix(in srgb, var(--foreground) 3%, transparent)',
+      }}
+    >
+      {/* icon */}
+      <span
+        className="flex size-8 shrink-0 items-center justify-center rounded-xl transition-all duration-150"
+        style={{
+          background: hov ? `${s.color}22` : 'color-mix(in srgb, var(--foreground) 7%, transparent)',
+          color: hov ? s.color : 'var(--muted-foreground)',
+        }}
+      >
+        {s.icon}
+      </span>
+      {/* text */}
+      <div className="min-w-0 flex-1">
+        <div
+          className="text-[12.5px] font-medium leading-snug transition-colors duration-150"
+          style={{ color: hov ? 'var(--foreground)' : 'color-mix(in srgb, var(--foreground) 80%, transparent)' }}
+        >
+          {s.label}
+        </div>
+        <div className="mt-0.5 text-[11px] leading-snug text-[var(--muted-foreground)] opacity-70">{s.desc}</div>
+      </div>
+      {/* arrow */}
+      <ChevronRight
+        className="size-3 shrink-0 transition-all duration-150"
+        style={{
+          opacity: hov ? 1 : 0,
+          transform: hov ? 'translateX(0)' : 'translateX(-4px)',
+          color: s.color,
+        }}
+      />
+    </button>
+  );
+}
 
 // ─── AiPage ───────────────────────────────────────────────────────────────────
 
@@ -362,7 +401,16 @@ function AiPage() {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
 
-  useEffect(() => { getAllChats().then(setChatList).catch(() => {}); }, []);
+  useEffect(() => {
+    getAllChats().then(chats => {
+      setChatList(chats);
+      const savedId = localStorage.getItem('active_chat_id');
+      if (savedId) {
+        const chat = chats.find(c => c.id === savedId);
+        if (chat) { setMessages(chat.messages); setChatId(chat.id); }
+      }
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -404,11 +452,13 @@ function AiPage() {
   const startNewChat = () => {
     setMessages([]); setChatId(null);
     setStreamingContent(''); setLiveToolCalls([]); setInput('');
+    localStorage.removeItem('active_chat_id');
   };
 
   const loadChat = (chat: StoredChat) => {
     setMessages(chat.messages); setChatId(chat.id);
     setStreamingContent(''); setLiveToolCalls([]);
+    localStorage.setItem('active_chat_id', chat.id);
   };
 
   const deleteChatEntry = async (id: string) => {
@@ -417,12 +467,15 @@ function AiPage() {
     if (chatId === id) startNewChat();
   };
 
-  const send = async () => {
-    const text = input.trim();
+  const send = async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim();
     if (!text || loading) return;
 
     const activeChatId = chatId ?? newId();
-    if (!chatId) setChatId(activeChatId);
+    if (!chatId) {
+      setChatId(activeChatId);
+      localStorage.setItem('active_chat_id', activeChatId);
+    }
 
     const next: Message[] = [...messages, { id: newId('u'), role: 'user', content: text }];
     setMessages(next);
@@ -552,8 +605,8 @@ function AiPage() {
           <Sparkles className="size-3 text-[var(--foreground)]" />
         </div>
         <div>
-          <div className="text-[12.5px] font-bold leading-tight">AI Assistant</div>
-          <div className="text-[10px] text-[var(--muted-foreground)]">Searches · executes · generates</div>
+          <div className="text-[12.5px] font-bold leading-tight">Quiry</div>
+          <div className="text-[10px] text-[var(--muted-foreground)]">Your API intelligence layer</div>
         </div>
 
         <div className="ml-auto flex items-center gap-1">
@@ -581,7 +634,7 @@ function AiPage() {
             <Button
               variant="ghost"
               size="icon-sm"
-              onClick={() => { setMessages([]); setChatId(null); setLiveToolCalls([]); setStreamingContent(''); }}
+              onClick={() => { setMessages([]); setChatId(null); setLiveToolCalls([]); setStreamingContent(''); localStorage.removeItem('active_chat_id'); }}
               title="Clear chat"
             >
               <Trash2 className="size-3.5" />
@@ -593,38 +646,40 @@ function AiPage() {
       {/* Messages */}
       <div ref={scrollContainerRef} onScroll={handleScroll} className="hide-scrollbar flex flex-1 flex-col gap-5 overflow-auto px-5 py-5">
         {!hasMessages ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-5 py-8 text-center">
-            <div className="flex size-14 items-center justify-center rounded-2xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--foreground)_6%,transparent)]">
-              <Sparkles className="size-6 text-[var(--foreground)]" />
-            </div>
-            <div>
-              <div className="mb-1.5 text-[15px] font-semibold text-[var(--foreground)]">Ask anything about your API</div>
-              <div className="mx-auto max-w-[360px] text-[12.5px] leading-relaxed text-[var(--muted-foreground)]">
-                Search endpoints, run live requests, DNS lookups, ping hosts, check security, and more.
-              </div>
-            </div>
-            <div className="flex w-full max-w-[580px] flex-col gap-4 px-4">
-              {STARTER_GROUPS.map(group => (
-                <div key={group.label}>
-                  <div className="mb-2 flex items-center gap-2">
-                    <span className="text-[10.5px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">{group.label}</span>
-                    <div className="h-px flex-1 bg-[var(--border)]" />
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {group.items.map(s => (
-                      <button
-                        key={s.label}
-                        type="button"
-                        onClick={() => setInput(s.label)}
-                        className="flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--border)] bg-[color-mix(in_srgb,var(--foreground)_4%,transparent)] px-3.5 py-1.5 text-[11.5px] text-[var(--foreground)] transition-colors hover:border-[var(--border-hover)] hover:bg-[var(--elevated)]"
-                      >
-                        {s.icon}
-                        {s.label}
-                      </button>
-                    ))}
-                  </div>
+          <div className="flex flex-1 flex-col items-center justify-center">
+            <div className="w-full max-w-[520px] px-4">
+
+              {/* ── Hero ── */}
+              <div className="mb-8 flex flex-col items-center gap-4 text-center">
+                {/* App icon */}
+                <div
+                  style={{
+                    width: 52, height: 52, borderRadius: 14,
+                    background: 'color-mix(in srgb, var(--foreground) 92%, transparent)',
+                    boxShadow: '0 0 0 1px color-mix(in srgb, var(--foreground) 12%, transparent), 0 8px 32px color-mix(in srgb, var(--foreground) 14%, transparent)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  <Sparkles size={22} style={{ color: 'var(--background)' }} />
                 </div>
-              ))}
+
+                <div>
+                  <h1 className="text-[22px] font-bold tracking-[-0.5px] text-[var(--foreground)]">
+                    Quiry
+                  </h1>
+                  <p className="mt-1.5 text-[13px] text-[var(--muted-foreground)]">
+                    Your API intelligence layer
+                  </p>
+                </div>
+              </div>
+
+              {/* ── Suggestion grid ── */}
+              <div className="grid grid-cols-2 gap-1.5">
+                {STARTERS.map(s => (
+                  <StarterCard key={s.label} s={s} onSend={send} />
+                ))}
+              </div>
+
             </div>
           </div>
         ) : (

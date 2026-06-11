@@ -1,44 +1,160 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate } from '@tanstack/react-router';
 import { useApp } from '../context';
 import { getHighlighter } from '../lib/highlighter';
 
+const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
+
+function CopyIcon({ done }: { done: boolean }) {
+  if (done) return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+      <path d="M3 8l3.5 3.5 6.5-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+      <rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
+  );
+}
+
+function ExploreIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+      <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M5 8h6M9 6l2 2-2 2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+const LANG_COLORS: Record<string, string> = {
+  typescript: '#3178c6', javascript: '#f0db4f', python: '#3572a5',
+  rust: '#dea584', go: '#00acd7', bash: '#89e051', sh: '#89e051',
+  json: '#40a9ff', yaml: '#cb171e', sql: '#e38c00', html: '#e44d26',
+  xml: '#e44d26', css: '#563d7c',
+};
+
 function FencedCode({ lang, body }: { lang: string; body: string }) {
   const { theme } = useApp();
+  const navigate = useNavigate();
   const [html, setHtml] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const idRef = useRef(0);
   const shikiTheme = theme === 'light' ? 'github-light' : 'github-dark-dimmed';
+
   useEffect(() => {
     const id = ++idRef.current;
-    const safeLang = ['json','bash','typescript','javascript','yaml','xml','html','python','go','rust','sql'].includes(lang) ? lang : 'text';
+    const safeLang = ['json', 'bash', 'typescript', 'javascript', 'yaml', 'xml', 'html', 'python', 'go', 'rust', 'sql'].includes(lang) ? lang : 'text';
     getHighlighter().then(hl => {
       if (id !== idRef.current) return;
       setHtml(hl.codeToHtml(body, { lang: safeLang, theme: shikiTheme }));
     }).catch(() => {});
   }, [body, lang, shikiTheme]);
 
-  const blockStyle: React.CSSProperties = {
-    borderRadius: lang ? '0 6px 6px 6px' : 6,
-    overflow: 'hidden',
-    border: '1px solid var(--border)',
+  const copy = () => {
+    navigator.clipboard.writeText(body).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1800);
   };
 
+  // Detect single-line HTTP endpoint: `METHOD /path`
+  const trimmed = body.trim();
+  const httpMatch = trimmed.match(/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\/\S*)$/i);
+  const isEndpoint = httpMatch && HTTP_METHODS.has(httpMatch[1].toUpperCase());
+
+  const openInExplorer = () => {
+    if (!httpMatch) return;
+    sessionStorage.setItem('explorer_pending_log', JSON.stringify({
+      method: httpMatch[1].toUpperCase(),
+      url: httpMatch[2],
+      title: `${httpMatch[1].toUpperCase()} ${httpMatch[2]}`,
+    }));
+    navigate({ to: '/explorer' });
+  };
+
+  const effectiveLang = lang || 'text';
+  const langColor = LANG_COLORS[effectiveLang.toLowerCase()];
+
   return (
-    <div style={{ position: 'relative', marginBottom: 10, marginTop: 4 }}>
-      {lang && (
-        <div style={{ fontSize: 10, color: 'var(--muted-foreground)', fontFamily: 'GeistMono, monospace', background: 'color-mix(in srgb, var(--foreground) 8%, transparent)', padding: '3px 10px', borderRadius: '6px 6px 0 0', borderBottom: '1px solid var(--border)', display: 'inline-block' }}>
-          {lang}
+    <div
+      style={{ position: 'relative', marginBottom: 12, marginTop: 4 }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {/* Header bar */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        background: 'color-mix(in srgb, var(--foreground) 6%, transparent)',
+        borderRadius: '8px 8px 0 0',
+        border: '1px solid var(--border)',
+        borderBottom: '1px solid color-mix(in srgb, var(--foreground) 8%, transparent)',
+        padding: '5px 10px',
+        gap: 8,
+      }}>
+        <span style={{
+          fontSize: 10,
+          fontFamily: 'GeistMono, monospace',
+          color: langColor ?? 'var(--muted-foreground)',
+          fontWeight: langColor ? 600 : 400,
+          letterSpacing: '0.02em',
+        }}>
+          {effectiveLang}
+        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, opacity: hovered ? 1 : 0, transition: 'opacity 0.15s' }}>
+          {isEndpoint && (
+            <button
+              type="button"
+              onClick={openInExplorer}
+              title="Open in Explorer"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                padding: '2px 8px', borderRadius: 5, border: '1px solid var(--border)',
+                background: 'color-mix(in srgb, var(--foreground) 8%, transparent)',
+                color: 'var(--foreground)', fontSize: 10, fontWeight: 500,
+                cursor: 'pointer', transition: 'background 0.1s',
+              }}
+              onMouseOver={e => (e.currentTarget.style.background = 'color-mix(in srgb, var(--foreground) 14%, transparent)')}
+              onMouseOut={e => (e.currentTarget.style.background = 'color-mix(in srgb, var(--foreground) 8%, transparent)')}
+            >
+              <ExploreIcon />
+              Open in Explorer
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={copy}
+            title={copied ? 'Copied!' : 'Copy code'}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 26, height: 22, borderRadius: 5,
+              border: '1px solid var(--border)',
+              background: 'color-mix(in srgb, var(--foreground) 8%, transparent)',
+              color: copied ? 'var(--success)' : 'var(--muted-foreground)',
+              cursor: 'pointer', transition: 'color 0.15s, background 0.1s',
+            }}
+            onMouseOver={e => (e.currentTarget.style.background = 'color-mix(in srgb, var(--foreground) 14%, transparent)')}
+            onMouseOut={e => (e.currentTarget.style.background = 'color-mix(in srgb, var(--foreground) 8%, transparent)')}
+          >
+            <CopyIcon done={copied} />
+          </button>
         </div>
-      )}
-      {html
-        ? <div className="md-code-block" style={blockStyle} dangerouslySetInnerHTML={{ __html: html }} />
-        : (
-          <div className="md-code-block" style={blockStyle}>
+      </div>
+
+      {/* Code body */}
+      <div style={{ borderRadius: '0 0 8px 8px', overflow: 'hidden', border: '1px solid var(--border)', borderTop: 'none' }}>
+        {html
+          ? <div className="md-code-block" dangerouslySetInnerHTML={{ __html: html }} />
+          : (
             <pre style={{ background: 'color-mix(in srgb, var(--foreground) 5%, transparent)', padding: '10px 14px', margin: 0 }}>
               <code style={{ fontFamily: 'GeistMono, monospace', fontSize: 12.5, lineHeight: 1.65, color: 'var(--foreground)' }}>{body}</code>
             </pre>
-          </div>
-        )
-      }
+          )
+        }
+      </div>
     </div>
   );
 }
@@ -90,10 +206,8 @@ function renderLines(lines: string[], keyRef: { k: number }): React.ReactNode[] 
     const line = lines[i];
     const trimmed = line.trim();
 
-    // Skip blank lines
     if (!trimmed) { i++; continue; }
 
-    // Heading (h1–h6) — matches even with emoji/special chars after the hashes
     const hm = trimmed.match(/^(#{1,6})\s+([\s\S]+)$/);
     if (hm) {
       const lvl = hm[1].length;
@@ -111,14 +225,12 @@ function renderLines(lines: string[], keyRef: { k: number }): React.ReactNode[] 
       continue;
     }
 
-    // Horizontal rule (---, ***, ___ — must be only those chars on the line)
     if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
       els.push(<hr key={keyRef.k++} style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '10px 0' }} />);
       i++;
       continue;
     }
 
-    // Blockquote
     if (trimmed.startsWith('>')) {
       const quotes: string[] = [];
       while (i < lines.length && lines[i].trim().startsWith('>')) {
@@ -133,7 +245,6 @@ function renderLines(lines: string[], keyRef: { k: number }): React.ReactNode[] 
       continue;
     }
 
-    // Unordered list
     if (/^[-*+]\s/.test(trimmed)) {
       const items: string[] = [];
       while (i < lines.length && /^[-*+]\s/.test(lines[i].trim())) {
@@ -150,7 +261,6 @@ function renderLines(lines: string[], keyRef: { k: number }): React.ReactNode[] 
       continue;
     }
 
-    // Ordered list
     if (/^\d+[.)]\s/.test(trimmed)) {
       const items: string[] = [];
       while (i < lines.length && /^\d+[.)]\s/.test(lines[i].trim())) {
@@ -167,14 +277,12 @@ function renderLines(lines: string[], keyRef: { k: number }): React.ReactNode[] 
       continue;
     }
 
-    // Table (lines starting with |)
     if (trimmed.startsWith('|')) {
       const tableLines: string[] = [];
       while (i < lines.length && lines[i].trim().startsWith('|')) {
         tableLines.push(lines[i].trim());
         i++;
       }
-      // Filter separator rows (|---|---| patterns)
       const dataRows = tableLines.filter(l => !/^\|[\s\-:|]+\|$/.test(l));
       if (dataRows.length > 0) {
         const parseRow = (row: string) => row.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
@@ -211,7 +319,6 @@ function renderLines(lines: string[], keyRef: { k: number }): React.ReactNode[] 
       continue;
     }
 
-    // Paragraph — collect consecutive non-structural lines
     const paraLines: string[] = [];
     while (i < lines.length) {
       const l = lines[i].trim();
@@ -238,7 +345,6 @@ function renderLines(lines: string[], keyRef: { k: number }): React.ReactNode[] 
 }
 
 export function Markdown({ content }: { content: string }) {
-  // Extract fenced code blocks first (they may contain blank lines)
   const segments: Array<{ t: 'code'; lang: string; body: string } | { t: 'text'; body: string }> = [];
   const codeRe = /```(\w*)\n?([\s\S]*?)(?:```|$)/g;
   let pos = 0;

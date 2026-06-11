@@ -703,6 +703,8 @@ async function handleAiChat(req: Request): Promise<Response> {
     customInstructions?: string;
     maxTokens?: number;
     stepTimeoutMs?: number;
+    temperature?: number;
+    topK?: number;
   };
 
   const provider = (ai.provider ?? 'anthropic') as Parameters<typeof runAgentLoop>[0]['provider'];
@@ -776,6 +778,8 @@ Be concise. Format code and JSON in fenced blocks.${ai.customInstructions ? `\n\
           baseUrl: ai.baseUrl || providerDefaults.baseUrl,
           maxTokens: ai.maxTokens ?? 4096,
           stepTimeoutMs: ai.stepTimeoutMs ?? 60_000,
+          temperature: ai.temperature,
+          topK: ai.topK && ai.topK > 0 ? ai.topK : undefined,
           parallelTools: true,
           enablePromptCache: true,
         },

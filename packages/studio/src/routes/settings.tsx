@@ -13,7 +13,11 @@ type AIProvider = 'anthropic' | 'openai' | 'ollama' | 'mistral' | 'github-copilo
 
 interface Settings {
   proxy: { enabled: boolean; type: 'http' | 'https' | 'socks5'; host: string; port: number; username: string; password: string; };
-  ai: { provider: AIProvider; apiKey: string; model: string; baseUrl: string; };
+  ai: {
+    provider: AIProvider; apiKey: string; model: string; baseUrl: string;
+    temperature: number; topK: number; maxTokens: number; stepTimeoutMs: number;
+    customInstructions: string;
+  };
   request: { timeout: number; followRedirects: boolean; sslVerify: boolean; };
 }
 
@@ -34,7 +38,7 @@ const PROVIDERS: Record<AIProvider, {
 
 const DEF: Settings = {
   proxy: { enabled: false, type: 'http', host: '', port: 8080, username: '', password: '' },
-  ai: { provider: 'anthropic', apiKey: '', model: 'claude-haiku-4-5-20251001', baseUrl: '' },
+  ai: { provider: 'anthropic', apiKey: '', model: 'claude-haiku-4-5-20251001', baseUrl: '', temperature: 1.0, topK: 0, maxTokens: 4096, stepTimeoutMs: 60000, customInstructions: '' },
   request: { timeout: 30000, followRedirects: true, sslVerify: true },
 };
 
@@ -227,6 +231,67 @@ function SettingsPage() {
                   />
                 </Field>
               )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Temperature" hint="Randomness (0 = deterministic, 1 = default)">
+                  <input
+                    className="input w-full font-mono"
+                    type="number"
+                    min={0}
+                    max={2}
+                    step={0.05}
+                    value={s.ai.temperature}
+                    onChange={e => set('ai', { temperature: parseFloat(e.target.value) || 0 })}
+                  />
+                </Field>
+                {s.ai.provider === 'anthropic' && (
+                  <Field label="Top K" hint="Vocabulary sampling limit (0 = disabled)">
+                    <input
+                      className="input w-full font-mono"
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={s.ai.topK}
+                      onChange={e => set('ai', { topK: parseInt(e.target.value, 10) || 0 })}
+                    />
+                  </Field>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Max tokens" hint="Maximum tokens per response">
+                  <input
+                    className="input w-full font-mono"
+                    type="number"
+                    min={256}
+                    step={256}
+                    value={s.ai.maxTokens}
+                    onChange={e => set('ai', { maxTokens: parseInt(e.target.value, 10) || 4096 })}
+                  />
+                </Field>
+                <Field label="Step timeout (ms)" hint="Abort LLM call if it takes longer than this">
+                  <input
+                    className="input w-full font-mono"
+                    type="number"
+                    min={5000}
+                    step={5000}
+                    value={s.ai.stepTimeoutMs}
+                    onChange={e => set('ai', { stepTimeoutMs: parseInt(e.target.value, 10) || 60000 })}
+                  />
+                </Field>
+              </div>
+            </Row>
+
+            <Row title="Custom instructions" desc="Appended to every system prompt. Use this to give the AI context about your API, team conventions, or preferred output format.">
+              <Field label="Instructions">
+                <textarea
+                  className="input w-full font-mono resize-y"
+                  rows={5}
+                  placeholder="e.g. Always prefer JSON output. The base URL in staging is https://staging.api.example.com."
+                  value={s.ai.customInstructions}
+                  onChange={e => set('ai', { customInstructions: e.target.value })}
+                />
+              </Field>
             </Row>
 
             <div className="pt-6 flex justify-end">

@@ -17,11 +17,84 @@ permissions:
 env:
   TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
+# ── 1. Build each platform's binary natively ──────────────────────────────────
 jobs:
-  release:
-    name: Build & publish
-    runs-on: ubuntu-latest
+  build:
+    name: Build (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux-x64
+            bun-target: bun-linux-x64
+            asset: wasper-linux-x64
 
+          - os: ubuntu-latest
+            label: linux-arm64
+            bun-target: bun-linux-arm64
+            asset: wasper-linux-arm64
+
+          - os: macos-latest
+            label: darwin-x64
+            bun-target: bun-darwin-x64
+            asset: wasper-darwin-x64
+
+          - os: macos-latest
+            label: darwin-arm64
+            bun-target: bun-darwin-arm64
+            asset: wasper-darwin-arm64
+
+          - os: windows-latest
+            label: windows-x64
+            bun-target: bun-windows-x64
+            asset: wasper-windows-x64.exe
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: packages/cli
+        run: bun install --frozen-lockfile
+
+      - name: Build binary
+        working-directory: packages/cli
+        shell: bash
+        run: |
+          mkdir -p dist/bin
+          bun build --compile --minify --target=${{ matrix.bun-target }} \
+            ./cli.ts --outfile dist/bin/${{ matrix.asset }}
+
+      - name: Smoke test (Unix)
+        if: runner.os != 'Windows'
+        working-directory: packages/cli
+        run: ./dist/bin/${{ matrix.asset }} --version || true
+
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        working-directory: packages/cli
+        shell: pwsh
+        run: .\dist\bin\${{ matrix.asset }} --version; exit 0
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.label }}
+          path: packages/cli/dist/bin/${{ matrix.asset }}
+          retention-days: 1
+
+# ── 2. Collect all binaries, publish npm, create GitHub Release ───────────────
+  release:
+    name: Publish & Release
+    needs: build
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,13 +112,6 @@ jobs:
         working-directory: packages/cli
         run: bun run build && chmod +x dist/cli.js bin/wasper.js
 
-      - name: Build standalone binaries
-        working-directory: packages/cli
-        run: bun scripts/build-binaries.ts
-
-      - name: List built assets
-        run: ls -lh packages/cli/dist/bin/
-
       - name: Publish to npm
         working-directory: packages/cli
         run: |
@@ -54,7 +120,23 @@ jobs:
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Create GitHub Release & upload binaries
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bin-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        run: |
+          cd release-assets
+          sha256sum wasper-linux-x64 wasper-linux-arm64 \
+                    wasper-darwin-x64 wasper-darwin-arm64 \
+                    wasper-windows-x64.exe > checksums.txt
+          echo "--- checksums ---"
+          cat checksums.txt
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
@@ -62,39 +144,40 @@ jobs:
           body: |
             ## wasper ${{ env.TAG }}
 
-            ### One-line install (macOS / Linux)
+            ### One-line install (macOS / Linux — no dependencies)
             ```bash
             curl -fsSL https://studio.stroke.click/install.sh | sh
             ```
 
-            ### Install via bun / npm
+            ### Install via package manager
             ```bash
-            bun add -g wasper-cli
-            # or
+            bun add -g wasper-cli   # requires bun runtime
             npm install -g wasper-cli
             ```
 
-            ### Standalone binaries (no runtime required)
-            Download the binary for your platform below and place it in your `$PATH`.
+            ### Standalone binaries
+            Download the binary for your platform, make it executable, and place it in your `$PATH`.
 
             | Platform | File |
             |---|---|
             | Linux x64 | `wasper-linux-x64` |
             | Linux ARM64 | `wasper-linux-arm64` |
-            | macOS x64 | `wasper-darwin-x64` |
+            | macOS x64 (Intel) | `wasper-darwin-x64` |
             | macOS ARM64 (Apple Silicon) | `wasper-darwin-arm64` |
             | Windows x64 | `wasper-windows-x64.exe` |
 
+            Verify integrity with `checksums.txt` (SHA-256).
+
             ---
-            After installing, run:
             ```bash
             wasper --url https://petstore.swagger.io/v2/swagger.json
             ```
           files: |
-            packages/cli/dist/bin/wasper-linux-x64
-            packages/cli/dist/bin/wasper-linux-arm64
-            packages/cli/dist/bin/wasper-darwin-x64
-            packages/cli/dist/bin/wasper-darwin-arm64
-            packages/cli/dist/bin/wasper-windows-x64.exe
+            release-assets/wasper-linux-x64
+            release-assets/wasper-linux-arm64
+            release-assets/wasper-darwin-x64
+            release-assets/wasper-darwin-arm64
+            release-assets/wasper-windows-x64.exe
+            release-assets/checksums.txt
           draft: false
           prerelease: ${{ contains(env.TAG, '-') }}

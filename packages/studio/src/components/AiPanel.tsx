@@ -316,7 +316,7 @@ export function AiPanel({ open, onClose }: { open: boolean; onClose: () => void 
         {/* ── Header ── */}
         <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 h-[36px] flex-shrink-0">
           <Sparkles size={12} className="text-[var(--accent)] flex-shrink-0" />
-          <span className="text-[12.5px] font-semibold text-[var(--foreground)] flex-1">AI Assistant</span>
+          <span className="text-[12.5px] font-semibold text-[var(--foreground)] flex-1">Quiry</span>
           <button
             onClick={clearChat}
             title="New conversation"
@@ -478,7 +478,7 @@ export function AiPanel({ open, onClose }: { open: boolean; onClose: () => void 
                 {streamingContent ? (
                   <div className="text-[12.5px] leading-relaxed text-[var(--foreground)]">
                     <Markdown content={streamingContent} />
-                    <span className="streaming-cursor" />
+                    <span style={{ display: 'inline-block', width: 7, height: 13, background: 'var(--foreground)', borderRadius: 1, opacity: 0.65, verticalAlign: 'text-bottom', marginLeft: 2, animation: 'cursor-blink 1s ease-in-out infinite' }} />
                   </div>
                 ) : (
                   <div className="flex items-center gap-2 text-[11.5px] text-[var(--muted-foreground)]">
