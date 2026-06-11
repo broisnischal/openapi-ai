@@ -831,17 +831,17 @@ function WorkspaceModal({ workspace, envs, onSave, onDelete, onClose }: {
           <button className="btn btn-ghost btn-icon btn-sm" onClick={onClose}><X size={13} /></button>
         </div>
 
-        <div className="flex-1 overflow-auto p-4 flex flex-col gap-5">
+        <div className="flex-1 overflow-auto p-4 flex flex-col gap-4">
           <div className="flex gap-2">
-            <input className="input h-8 flex-1 text-[13px] font-semibold" placeholder="Workspace name" value={draft.name} onChange={e => set({ name: e.target.value })} />
-            <select className="select h-8 w-[200px] text-[12.5px]" value={draft.envId} onChange={e => set({ envId: e.target.value })}>
+            <input className="input h-8 flex-1 text-[13px]" placeholder="Workspace name" value={draft.name} onChange={e => set({ name: e.target.value })} />
+            <select className="select h-8 w-[180px] text-[12.5px]" value={draft.envId} onChange={e => set({ envId: e.target.value })}>
               <option value="">Env: follow global</option>
               {envs.map(e => <option key={e.id} value={e.id}>Env: {e.name}</option>)}
             </select>
           </div>
 
-          <div>
-            <div className="text-[11.5px] font-semibold uppercase tracking-wider text-[var(--placeholder-foreground)] mb-2">Default auth — requests set to "Inherit" use this</div>
+          <div className="border-t border-[var(--border)] pt-4">
+            <div className="text-[11px] font-semibold uppercase tracking-widest text-[var(--placeholder-foreground)] mb-3">Default auth — requests set to "Inherit" use this</div>
             <AuthPanel
               auth={{ ...DEFAULT_AUTH, ...draft.auth }}
               onChange={a => set({ auth: { ...draft.auth, ...a, type: a.type === 'inherit' ? 'cli' : a.type } as Workspace['auth'] })}
@@ -849,8 +849,8 @@ function WorkspaceModal({ workspace, envs, onSave, onDelete, onClose }: {
             />
           </div>
 
-          <div>
-            <div className="text-[11.5px] font-semibold uppercase tracking-wider text-[var(--placeholder-foreground)] mb-2">Default headers — merged under request headers</div>
+          <div className="border-t border-[var(--border)] pt-4">
+            <div className="text-[11px] font-semibold uppercase tracking-widest text-[var(--placeholder-foreground)] mb-3">Default headers — merged under request headers</div>
             <KVTable
               rows={draft.headers.length ? draft.headers : [{ key: '', value: '', enabled: true }]}
               onChange={headers => set({ headers })}

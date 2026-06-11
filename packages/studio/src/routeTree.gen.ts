@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as WorkflowsRouteImport } from './routes/workflows'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as LogsRouteImport } from './routes/logs'
+import { Route as LoadTestRouteImport } from './routes/load-test'
 import { Route as InterceptRouteImport } from './routes/intercept'
 import { Route as ExplorerRouteImport } from './routes/explorer'
 import { Route as EnvironmentsRouteImport } from './routes/environments'
@@ -34,6 +35,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const LogsRoute = LogsRouteImport.update({
   id: '/logs',
   path: '/logs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoadTestRoute = LoadTestRouteImport.update({
+  id: '/load-test',
+  path: '/load-test',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InterceptRoute = InterceptRouteImport.update({
@@ -86,6 +92,7 @@ export interface FileRoutesByFullPath {
   '/environments': typeof EnvironmentsRoute
   '/explorer': typeof ExplorerRoute
   '/intercept': typeof InterceptRoute
+  '/load-test': typeof LoadTestRoute
   '/logs': typeof LogsRoute
   '/settings': typeof SettingsRoute
   '/workflows': typeof WorkflowsRoute
@@ -99,6 +106,7 @@ export interface FileRoutesByTo {
   '/environments': typeof EnvironmentsRoute
   '/explorer': typeof ExplorerRoute
   '/intercept': typeof InterceptRoute
+  '/load-test': typeof LoadTestRoute
   '/logs': typeof LogsRoute
   '/settings': typeof SettingsRoute
   '/workflows': typeof WorkflowsRoute
@@ -113,6 +121,7 @@ export interface FileRoutesById {
   '/environments': typeof EnvironmentsRoute
   '/explorer': typeof ExplorerRoute
   '/intercept': typeof InterceptRoute
+  '/load-test': typeof LoadTestRoute
   '/logs': typeof LogsRoute
   '/settings': typeof SettingsRoute
   '/workflows': typeof WorkflowsRoute
@@ -128,6 +137,7 @@ export interface FileRouteTypes {
     | '/environments'
     | '/explorer'
     | '/intercept'
+    | '/load-test'
     | '/logs'
     | '/settings'
     | '/workflows'
@@ -141,6 +151,7 @@ export interface FileRouteTypes {
     | '/environments'
     | '/explorer'
     | '/intercept'
+    | '/load-test'
     | '/logs'
     | '/settings'
     | '/workflows'
@@ -154,6 +165,7 @@ export interface FileRouteTypes {
     | '/environments'
     | '/explorer'
     | '/intercept'
+    | '/load-test'
     | '/logs'
     | '/settings'
     | '/workflows'
@@ -168,6 +180,7 @@ export interface RootRouteChildren {
   EnvironmentsRoute: typeof EnvironmentsRoute
   ExplorerRoute: typeof ExplorerRoute
   InterceptRoute: typeof InterceptRoute
+  LoadTestRoute: typeof LoadTestRoute
   LogsRoute: typeof LogsRoute
   SettingsRoute: typeof SettingsRoute
   WorkflowsRoute: typeof WorkflowsRoute
@@ -194,6 +207,13 @@ declare module '@tanstack/react-router' {
       path: '/logs'
       fullPath: '/logs'
       preLoaderRoute: typeof LogsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/load-test': {
+      id: '/load-test'
+      path: '/load-test'
+      fullPath: '/load-test'
+      preLoaderRoute: typeof LoadTestRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/intercept': {
@@ -264,6 +284,7 @@ const rootRouteChildren: RootRouteChildren = {
   EnvironmentsRoute: EnvironmentsRoute,
   ExplorerRoute: ExplorerRoute,
   InterceptRoute: InterceptRoute,
+  LoadTestRoute: LoadTestRoute,
   LogsRoute: LogsRoute,
   SettingsRoute: SettingsRoute,
   WorkflowsRoute: WorkflowsRoute,

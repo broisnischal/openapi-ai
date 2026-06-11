@@ -7,7 +7,7 @@ import { cn } from '../lib/utils';
 import {
   LayoutGrid, Terminal, Activity, Key, Settings, Bot,
   Sun, Moon, ArrowRightLeft,
-  ChevronLeft, ChevronRight, Layers, Workflow, Sparkles, BookOpen,
+  ChevronLeft, ChevronRight, Layers, Workflow, Sparkles, BookOpen, Gauge, Braces,
 } from 'lucide-react';
 
 interface Status { spec: { title: string; version: string }; endpointCount: number; }
@@ -17,6 +17,7 @@ const ALL_NAV = [
   { to: '/explorer',   icon: Terminal,       label: 'Explorer',        exact: false },
   { to: '/ai',         icon: Bot,            label: 'Quiry',           exact: false },
   { to: '/workflows',  icon: Workflow,       label: 'Workflows',       exact: false },
+  { to: '/load-test',  icon: Gauge,          label: 'Load Test',       exact: false },
   { to: '/intercept',  icon: ArrowRightLeft, label: 'Intercept',       exact: false },
   { to: '/logs',       icon: Activity,       label: 'Logs',            exact: false },
   { to: '/auth',       icon: Key,            label: 'Authentication',  exact: false },
@@ -153,6 +154,15 @@ export function Sidebar() {
           className="flex items-center justify-center w-7 h-7 rounded-lg border-0 bg-transparent text-[var(--accent)] cursor-pointer hover:bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] transition-colors flex-shrink-0"
         >
           <Sparkles size={13} />
+        </button>
+
+        {/* Decoder button */}
+        <button
+          onClick={() => window.dispatchEvent(new CustomEvent('open-decoder'))}
+          title="Decoder / Encoder"
+          className="flex items-center justify-center w-7 h-7 rounded-lg border-0 bg-transparent text-[var(--muted-foreground)] cursor-pointer hover:text-[var(--foreground)] hover:bg-[color-mix(in_srgb,var(--foreground)_7%,transparent)] transition-colors flex-shrink-0"
+        >
+          <Braces size={13} />
         </button>
 
         {/* Theme toggle */}

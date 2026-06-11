@@ -4,6 +4,7 @@ import { Sidebar } from '../components/Sidebar';
 import { CommandPalette } from '../components/CommandPalette';
 import { HotkeyHelp } from '../components/HotkeyHelp';
 import { AiPanel } from '../components/AiPanel';
+import { DecoderPanel } from '../components/DecoderPanel';
 import { AppContext, DEFAULT_FEATURES, type Features, useApp } from '../context';
 import { Sun, Moon } from 'lucide-react';
 import { apiClient, getCliUrl, setCliUrl, clearCliUrl, getCliToken, setCliToken, clearCliToken, LOG_WS_URL } from '../lib/api';
@@ -400,6 +401,7 @@ function AppShell() {
   const pendingOpRef = useRef<ParsedOp | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [decoderOpen, setDecoderOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem('sidebar_collapsed') === '1'; } catch { return false; }
   });
@@ -519,6 +521,13 @@ function AppShell() {
     return () => window.removeEventListener('open-ai-panel', handler);
   }, []);
 
+  // Decoder panel open event
+  useEffect(() => {
+    const handler = () => setDecoderOpen(v => !v);
+    window.addEventListener('open-decoder', handler);
+    return () => window.removeEventListener('open-decoder', handler);
+  }, []);
+
   const handleCmdSelect = (op: ParsedOp) => {
     pendingOpRef.current = op;
     window.dispatchEvent(new CustomEvent('cmd-open-endpoint', { detail: op }));
@@ -572,6 +581,7 @@ function AppShell() {
           />
           <HotkeyHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
           <AiPanel open={aiPanelOpen} onClose={() => setAiPanelOpen(false)} />
+          <DecoderPanel open={decoderOpen} onClose={() => setDecoderOpen(false)} />
         </>
       )}
     </>

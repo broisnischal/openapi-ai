@@ -1,7 +1,6 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 
-// Text input with a filtered suggestion dropdown — used for header names,
-// header values (content types…), and anywhere a known-vocabulary helps.
 export function SuggestInput({ value, onChange, suggestions, placeholder, className, onEnter }: {
   value: string;
   onChange: (v: string) => void;
@@ -12,7 +11,8 @@ export function SuggestInput({ value, onChange, suggestions, placeholder, classN
 }) {
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(0);
-  const wrapRef = useRef<HTMLDivElement>(null);
+  const [popStyle, setPopStyle] = useState<React.CSSProperties>({});
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const q = value.trim().toLowerCase();
   const matches = q
@@ -20,14 +20,30 @@ export function SuggestInput({ value, onChange, suggestions, placeholder, classN
     : suggestions.slice(0, 12);
   const show = open && matches.length > 0;
 
+  useEffect(() => {
+    if (!show || !inputRef.current) return;
+    const update = () => {
+      const r = inputRef.current!.getBoundingClientRect();
+      setPopStyle({ top: r.bottom + 3, left: r.left, minWidth: r.width });
+    };
+    update();
+    window.addEventListener('scroll', update, true);
+    window.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('scroll', update, true);
+      window.removeEventListener('resize', update);
+    };
+  }, [show]);
+
   const pick = (s: string) => {
     onChange(s);
     setOpen(false);
   };
 
   return (
-    <div ref={wrapRef} className="relative flex-1 min-w-0" style={{ flex: className?.includes('flex-[2]') ? 2 : undefined }}>
+    <div className="relative flex-1 min-w-0" style={{ flex: className?.includes('flex-[2]') ? 2 : undefined }}>
       <input
+        ref={inputRef}
         className={className ?? 'input w-full h-7 text-[12.5px] font-mono'}
         placeholder={placeholder}
         value={value}
@@ -46,8 +62,8 @@ export function SuggestInput({ value, onChange, suggestions, placeholder, classN
           else if (e.key === 'Tab' && matches[hi]) pick(matches[hi]!);
         }}
       />
-      {show && (
-        <div className="suggest-pop">
+      {show && createPortal(
+        <div className="suggest-pop" style={{ position: 'fixed', zIndex: 9999, ...popStyle }}>
           {matches.map((s, i) => (
             <button
               key={s}
@@ -58,7 +74,8 @@ export function SuggestInput({ value, onChange, suggestions, placeholder, classN
               {s}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

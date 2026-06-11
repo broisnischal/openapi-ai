@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from '@tanstack/react-router';
+import { createFileRoute } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { apiClient, CLI_BASE_URL, cliLink } from '../lib/api';
 import { cacheInvalidateSpec } from '../lib/cache';
@@ -8,7 +8,7 @@ import {
   RefreshCw, Copy, Check, ExternalLink,
   Zap, Globe, ArrowUpRight, CheckCircle,
   Upload, Link2, FileJson, FileCode2, X,
-  Bot, Activity, Layers, Eye, EyeOff, Terminal,
+  Layers, Eye, EyeOff, Terminal,
 } from 'lucide-react';
 
 export const Route = createFileRoute('/')({ component: OverviewPage });
@@ -365,24 +365,120 @@ function SpecLoader({ onLoaded }: { onLoaded: () => void }) {
   );
 }
 
-// ─── MCP client configs ───────────────────────────────────────────────────────
-type McpClient = 'claude-desktop' | 'claude-code' | 'http';
+// ─── MCP brand icons ──────────────────────────────────────────────────────────
+function IconClaude({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M13.494 2.853h3.252l5.857 16.294h-3.114l-1.26-3.703H9.77l-1.26 3.703H5.397L11.254 2.853h2.24zm-.78 9.913h4.476l-2.238-6.587-2.238 6.587zM6.286 2.853H9.57L3.714 19.147H.429L6.286 2.853z"/>
+    </svg>
+  );
+}
+function IconCursor({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M4.5 2L20 12l-7 2-2 8z"/>
+    </svg>
+  );
+}
+function IconVSCode({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M23.15 2.587L18.21.21a1.494 1.494 0 00-1.705.29l-9.46 8.63-4.12-3.128a1 1 0 00-1.276.057L.327 7.261A1 1 0 00.326 8.74L3.9 12 .326 15.26A1 1 0 00.327 16.74l1.323 1.101a1 1 0 001.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 001.704.29l4.942-2.377A1.5 1.5 0 0024 19.86V4.14a1.5 1.5 0 00-.85-1.553zM17.58 19.109l-7.739-6.687 7.739-6.687v13.374z"/>
+    </svg>
+  );
+}
+function IconWindsurf({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 2C7.5 2 4 8 4 12s3.5 10 8 10 8-4.5 8-10c0-2-2-4-4-4-1.5 0-3 1-3 3s1.5 3 3 3"/>
+      <path d="M4 12c4-2 8-2 12 0" opacity=".4"/>
+    </svg>
+  );
+}
+function IconAntigravity({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 2l3 7h7l-5.5 4 2 7L12 16l-6.5 4 2-7L2 9h7z"/>
+    </svg>
+  );
+}
+function IconHTTP({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9"/>
+      <path d="M12 3c-2.4 3-4 5.7-4 9s1.6 6 4 9M12 3c2.4 3 4 5.7 4 9s-1.6 6-4 9M3 12h18"/>
+    </svg>
+  );
+}
 
-const MCP_CLIENTS: { id: McpClient; label: string }[] = [
-  { id: 'claude-desktop', label: 'Claude Desktop' },
-  { id: 'claude-code',    label: 'Claude Code' },
-  { id: 'http',           label: 'HTTP / Other' },
+// ─── MCP client configs ───────────────────────────────────────────────────────
+type McpClient = 'claude-desktop' | 'claude-code' | 'cursor' | 'vscode' | 'windsurf' | 'antigravity' | 'http';
+
+const MCP_CLIENTS: {
+  id: McpClient; label: string; sublabel: string;
+  color: string; bg: string;
+  Icon: React.FC<{ size?: number }>;
+  staticDeeplink?: string;
+  computeDeeplink?: (mcpUrl: string) => string;
+}[] = [
+  {
+    id: 'claude-desktop', label: 'Claude Desktop', sublabel: 'Anthropic',
+    color: '#c084fc', bg: 'rgba(192,132,252,0.13)',
+    Icon: IconClaude,
+    staticDeeplink: 'claude://settings/mcp-servers',
+  },
+  {
+    id: 'claude-code', label: 'Claude Code', sublabel: 'CLI',
+    color: '#a78bfa', bg: 'rgba(167,139,250,0.13)',
+    Icon: IconClaude,
+  },
+  {
+    id: 'cursor', label: 'Cursor', sublabel: 'Anysphere',
+    color: '#60a5fa', bg: 'rgba(96,165,250,0.13)',
+    Icon: IconCursor,
+    computeDeeplink: (url) =>
+      `cursor://anysphere.cursor-deeplink/mcp/install?name=wasper&config=${encodeURIComponent(btoa(JSON.stringify({ url })))}`,
+  },
+  {
+    id: 'vscode', label: 'VS Code', sublabel: 'Microsoft',
+    color: '#4d9ef6', bg: 'rgba(77,158,246,0.13)',
+    Icon: IconVSCode,
+    staticDeeplink: 'vscode://settings/mcp',
+  },
+  {
+    id: 'windsurf', label: 'Windsurf', sublabel: 'Codeium',
+    color: '#22d3ee', bg: 'rgba(34,211,238,0.13)',
+    Icon: IconWindsurf,
+  },
+  {
+    id: 'antigravity', label: 'Antigravity', sublabel: 'MCP client',
+    color: '#fb923c', bg: 'rgba(251,146,60,0.13)',
+    Icon: IconAntigravity,
+  },
+  {
+    id: 'http', label: 'HTTP / Other', sublabel: 'Generic',
+    color: '#94a3b8', bg: 'rgba(148,163,184,0.13)',
+    Icon: IconHTTP,
+  },
 ];
 
 const MCP_FILE_LABELS: Record<McpClient, string> = {
   'claude-desktop': '~/Library/Application Support/Claude/claude_desktop_config.json',
   'claude-code':    'Terminal',
-  'http':           'Endpoint URL',
+  'cursor':         '~/.cursor/mcp.json  ·  or project .cursor/mcp.json',
+  'vscode':         '.vscode/mcp.json',
+  'windsurf':       '~/.codeium/windsurf/mcp_config.json',
+  'antigravity':    'mcp.json',
+  'http':           'Streamable HTTP endpoint',
 };
 
 const MCP_HINTS: Record<McpClient, string> = {
-  'claude-desktop': 'Add to your Claude Desktop config file, then restart Claude Desktop.',
-  'claude-code':    'Run this command in your terminal to register the MCP server.',
+  'claude-desktop': 'Merge into your Claude Desktop config, then restart the app.',
+  'claude-code':    'Run in your terminal — registers the MCP server globally.',
+  'cursor':         'Click "Add to Cursor" for one-click install, or paste the config manually.',
+  'vscode':         'Add to .vscode/mcp.json in your workspace, then reload the window.',
+  'windsurf':       'Merge into your Windsurf MCP config, then restart Windsurf.',
+  'antigravity':    'Add to your Antigravity MCP configuration file.',
   'http':           'Use this Streamable HTTP endpoint with any MCP-compatible client.',
 };
 
@@ -483,12 +579,13 @@ function OverviewPage() {
   const mcpUrl = `${CLI_BASE_URL}/mcp`;
 
   const mcpSnippets: Record<McpClient, string> = {
-    'claude-desktop': JSON.stringify(
-      { mcpServers: { 'wasper': { type: 'streamable-http', url: mcpUrl } } },
-      null, 2,
-    ),
-    'claude-code': `claude mcp add wasper ${mcpUrl} --transport http`,
-    'http': mcpUrl,
+    'claude-desktop': JSON.stringify({ mcpServers: { wasper: { type: 'streamable-http', url: mcpUrl } } }, null, 2),
+    'claude-code':    `claude mcp add wasper ${mcpUrl} --transport http`,
+    'cursor':         JSON.stringify({ mcpServers: { wasper: { url: mcpUrl } } }, null, 2),
+    'vscode':         JSON.stringify({ servers: { wasper: { type: 'http', url: mcpUrl } } }, null, 2),
+    'windsurf':       JSON.stringify({ mcpServers: { wasper: { serverUrl: mcpUrl } } }, null, 2),
+    'antigravity':    JSON.stringify({ mcpServers: { wasper: { type: 'streamable-http', url: mcpUrl } } }, null, 2),
+    'http':           mcpUrl,
   };
 
   const copy = (key: string, text: string) => {
@@ -529,135 +626,146 @@ function OverviewPage() {
       {/* ── Scrollable content ── */}
       <div className="flex-1 overflow-auto">
         {specLoaded ? (
-          <div className="max-w-[960px] px-8 py-6 flex flex-col gap-6">
+          <div className="max-w-[880px] px-8 py-6 flex flex-col gap-5">
 
-            {/* ── Stats strip ── */}
-            <div className="grid grid-cols-3 divide-x divide-[var(--border)] border border-[var(--border)] rounded-xl overflow-hidden bg-[var(--card)]">
-              <div className="px-6 py-5">
-                <div className="text-[10px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)] mb-3">Endpoints</div>
-                <div className="text-[34px] font-bold leading-none tracking-tight text-[var(--foreground)]">{status!.endpointCount}</div>
-                <div className="mt-2 text-[11.5px] text-[var(--muted-foreground)]">API operations</div>
-              </div>
-              <div className="px-6 py-5">
-                <div className="text-[10px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)] mb-3">Base URL</div>
-                <div className="font-mono text-[12px] text-[var(--foreground)] break-all leading-snug">
-                  {status!.spec.baseUrl || status!.spec.url || <span className="text-[var(--muted-foreground)]">—</span>}
+            {/* ── Stats row ── */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                {
+                  label: 'Endpoints',
+                  icon: Globe,
+                  value: <span className="text-[36px] font-bold leading-none tracking-tight text-[var(--foreground)]">{status!.endpointCount}</span>,
+                  sub: 'API operations',
+                },
+                {
+                  label: 'Base URL',
+                  icon: Link2,
+                  value: <span className="font-mono text-[12px] text-[var(--foreground)] break-all leading-snug">
+                    {status!.spec.baseUrl || status!.spec.url || <span className="text-[var(--muted-foreground)]">—</span>}
+                  </span>,
+                  sub: 'Server origin',
+                },
+                {
+                  label: 'Version',
+                  icon: FileJson,
+                  value: <span className="font-mono text-[28px] font-bold leading-none text-[var(--foreground)]">v{status!.spec.version}</span>,
+                  sub: 'OpenAPI spec',
+                },
+              ].map(({ label, icon: Icon, value, sub }) => (
+                <div key={label} className="rounded-xl border border-[var(--border)] bg-[var(--card)] px-5 py-4 flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">{label}</span>
+                    <div className="size-5 rounded-md bg-[color-mix(in_srgb,var(--foreground)_6%,transparent)] flex items-center justify-center">
+                      <Icon size={10} className="text-[var(--muted-foreground)]" />
+                    </div>
+                  </div>
+                  <div className="flex-1 flex items-end">{value}</div>
+                  <div className="text-[11px] text-[var(--placeholder-foreground)]">{sub}</div>
                 </div>
-                <div className="mt-2 text-[11.5px] text-[var(--muted-foreground)]">Server origin</div>
-              </div>
-              <div className="px-6 py-5">
-                <div className="text-[10px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)] mb-3">Version</div>
-                <div className="inline-flex items-center font-mono text-[13px] font-semibold text-[var(--foreground)]">
-                  v{status!.spec.version}
-                </div>
-                <div className="mt-2 text-[11.5px] text-[var(--muted-foreground)]">OpenAPI spec</div>
-              </div>
+              ))}
             </div>
 
-            {/* ── MCP + Actions ── */}
-            <div className="grid grid-cols-[1fr_240px] gap-4">
+            {/* ── MCP Configuration ── */}
+            {(() => {
+              const active = MCP_CLIENTS.find(c => c.id === mcpClient)!;
+              const deeplink = active.staticDeeplink ?? active.computeDeeplink?.(mcpUrl);
+              return (
+                <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] overflow-hidden">
 
-              {/* MCP Configuration */}
-              <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)]">
-                <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
-                  <div>
-                    <div className="text-[14px] font-semibold text-[var(--foreground)]">MCP Configuration</div>
-                    <div className="mt-0.5 text-[12px] text-[var(--muted-foreground)]">Connect your AI client to this server</div>
+                  {/* Card header */}
+                  <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3.5">
+                    <div className="flex items-center gap-3">
+                      <div className="size-8 rounded-lg flex items-center justify-center" style={{ background: active.bg, color: active.color }}>
+                        <active.Icon size={16} />
+                      </div>
+                      <div>
+                        <span className="text-[13.5px] font-semibold text-[var(--foreground)]">MCP Configuration</span>
+                        <span className="ml-2 text-[12px] text-[var(--muted-foreground)]">Connect your AI coding tool</span>
+                      </div>
+                    </div>
+                    <a href={mcpUrl} target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 rounded-full border border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)] px-2.5 py-1 text-[11px] font-medium text-[#22c55e] no-underline transition-colors hover:bg-[rgba(34,197,94,0.14)]">
+                      <span className="size-1.5 rounded-full bg-[#22c55e]" style={{ boxShadow: '0 0 4px rgba(34,197,94,0.7)' }} />
+                      Live
+                      <ExternalLink size={9} className="opacity-70" />
+                    </a>
                   </div>
-                  <a href={mcpUrl} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 rounded-full border border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)] px-2.5 py-1 text-[11px] font-medium text-[#22c55e] no-underline transition-colors hover:bg-[rgba(34,197,94,0.14)]">
-                    <span className="size-1.5 rounded-full bg-[#22c55e]" style={{ boxShadow: '0 0 4px rgba(34,197,94,0.7)' }} />
-                    Live
-                    <ExternalLink size={9} className="opacity-70" />
-                  </a>
-                </div>
 
-                <div className="p-5">
-                  {/* Client selector */}
-                  <div className="mb-4 flex gap-0.5 rounded-lg bg-[var(--elevated)] p-1">
-                    {MCP_CLIENTS.map(c => (
-                      <button key={c.id} onClick={() => setMcpClient(c.id)}
-                        className={cn(
-                          'flex-1 rounded-md py-1.5 text-[12px] font-medium transition-all duration-100 border-0 cursor-pointer font-sans',
-                          mcpClient === c.id
-                            ? 'bg-[var(--background)] text-[var(--foreground)] shadow-sm'
-                            : 'bg-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground-secondary)]',
-                        )}>
-                        {c.label}
-                      </button>
-                    ))}
+                  {/* Client icon grid */}
+                  <div className="flex items-center gap-1 px-4 py-3 border-b border-[var(--border)] overflow-x-auto">
+                    {MCP_CLIENTS.map(c => {
+                      const isActive = mcpClient === c.id;
+                      return (
+                        <button
+                          key={c.id}
+                          onClick={() => setMcpClient(c.id)}
+                          title={c.label}
+                          className={cn(
+                            'flex flex-col items-center gap-1.5 rounded-xl px-3.5 py-2.5 shrink-0 cursor-pointer border transition-all duration-100 font-sans',
+                            isActive
+                              ? 'border-[var(--border-strong)] bg-[var(--elevated)]'
+                              : 'border-transparent hover:border-[var(--border)] hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)]',
+                          )}
+                        >
+                          <div
+                            className="size-9 rounded-xl flex items-center justify-center transition-colors"
+                            style={{ background: isActive ? c.bg : 'var(--elevated)', color: isActive ? c.color : 'var(--muted-foreground)' }}
+                          >
+                            <c.Icon size={18} />
+                          </div>
+                          <span
+                            className="text-[10.5px] font-medium leading-none whitespace-nowrap transition-colors"
+                            style={{ color: isActive ? c.color : 'var(--muted-foreground)' }}
+                          >
+                            {c.label}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
 
                   {/* Code block */}
-                  <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--elevated)]">
-                    <div className="flex items-center justify-between border-b border-[var(--border)] px-3.5 py-2">
-                      <span className="truncate font-mono text-[10.5px] text-[var(--muted-foreground)]">
-                        {MCP_FILE_LABELS[mcpClient]}
-                      </span>
-                      <button onClick={() => copy(mcpClient, mcpSnippets[mcpClient])}
-                        className={cn(
-                          'ml-3 flex shrink-0 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 py-1 text-[11px] font-sans cursor-pointer transition-colors',
-                          copied === mcpClient ? 'text-[#22c55e]' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
-                        )}>
-                        {copied === mcpClient ? <Check size={10} /> : <Copy size={10} />}
-                        {copied === mcpClient ? 'Copied' : 'Copy'}
-                      </button>
+                  <div className="p-5 flex flex-col gap-3">
+                    <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--elevated)]">
+                      <div className="flex items-center justify-between border-b border-[var(--border)] px-3.5 py-2">
+                        <span className="truncate font-mono text-[10.5px] text-[var(--muted-foreground)]">
+                          {MCP_FILE_LABELS[mcpClient]}
+                        </span>
+                        <button onClick={() => copy(mcpClient, mcpSnippets[mcpClient])}
+                          className={cn(
+                            'ml-3 flex shrink-0 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 py-1 text-[11px] font-sans cursor-pointer transition-colors',
+                            copied === mcpClient ? 'text-[#22c55e]' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
+                          )}>
+                          {copied === mcpClient ? <Check size={10} /> : <Copy size={10} />}
+                          {copied === mcpClient ? 'Copied' : 'Copy'}
+                        </button>
+                      </div>
+                      <pre className="m-0 overflow-auto px-4 py-3.5 font-mono text-[11.5px] leading-relaxed text-[var(--foreground)] whitespace-pre-wrap break-all">
+                        {mcpSnippets[mcpClient]}
+                      </pre>
                     </div>
-                    <pre className="m-0 overflow-auto px-4 py-3.5 font-mono text-[11.5px] leading-relaxed text-[var(--foreground)] whitespace-pre-wrap break-all">
-                      {mcpSnippets[mcpClient]}
-                    </pre>
-                  </div>
 
-                  <p className="mt-3 text-[11.5px] leading-relaxed text-[var(--muted-foreground)]">
-                    {MCP_HINTS[mcpClient]}
-                  </p>
-                </div>
-              </div>
-
-              {/* Right column */}
-              <div className="flex flex-col gap-3">
-
-                {/* Quick Actions */}
-                <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)]">
-                  <div className="border-b border-[var(--border)] px-4 py-3">
-                    <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">Quick Actions</span>
-                  </div>
-                  <div className="flex flex-col p-2 gap-0.5">
-                    <Link to="/explorer"
-                      className="flex items-center justify-between rounded-lg bg-[var(--foreground)] px-3 py-2.5 text-[12.5px] font-semibold text-[var(--background)] no-underline transition-opacity hover:opacity-85">
-                      Open Explorer <ArrowUpRight size={11} />
-                    </Link>
-                    <Link to="/ai"
-                      className="flex items-center justify-between rounded-lg px-3 py-2.5 text-[12.5px] text-[var(--muted-foreground)] no-underline transition-colors hover:bg-[var(--elevated)] hover:text-[var(--foreground)]">
-                      AI Chat <Bot size={11} />
-                    </Link>
-                    <Link to="/logs"
-                      className="flex items-center justify-between rounded-lg px-3 py-2.5 text-[12.5px] text-[var(--muted-foreground)] no-underline transition-colors hover:bg-[var(--elevated)] hover:text-[var(--foreground)]">
-                      View Logs <Activity size={11} />
-                    </Link>
-                    <a href={cliLink('/openapi.json')} target="_blank" rel="noopener noreferrer"
-                      className="flex items-center justify-between rounded-lg px-3 py-2.5 text-[12.5px] text-[var(--muted-foreground)] no-underline transition-colors hover:bg-[var(--elevated)] hover:text-[var(--foreground)]">
-                      Raw Spec <ExternalLink size={11} />
-                    </a>
+                    {/* Hint + deeplink */}
+                    <div className="flex items-center justify-between gap-4">
+                      <p className="text-[11.5px] leading-relaxed text-[var(--muted-foreground)]">
+                        {MCP_HINTS[mcpClient]}
+                      </p>
+                      {deeplink && (
+                        <a
+                          href={deeplink}
+                          className="shrink-0 flex items-center gap-2 rounded-lg px-3.5 py-2 text-[12px] font-semibold no-underline transition-all hover:opacity-90"
+                          style={{ background: active.bg, color: active.color }}
+                        >
+                          <active.Icon size={13} />
+                          {active.id === 'cursor' ? `Add to ${active.label}` : `Open ${active.label}`}
+                          <ArrowUpRight size={11} />
+                        </a>
+                      )}
+                    </div>
                   </div>
                 </div>
-
-                {/* MCP Endpoint */}
-                <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4">
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="size-1.5 shrink-0 rounded-full bg-[#22c55e]" style={{ boxShadow: '0 0 5px rgba(34,197,94,0.7)' }} />
-                    <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">MCP Endpoint</span>
-                    <a href={mcpUrl} target="_blank" rel="noopener noreferrer"
-                      className="ml-auto text-[var(--placeholder-foreground)] no-underline transition-colors hover:text-[var(--foreground)]">
-                      <ExternalLink size={10} />
-                    </a>
-                  </div>
-                  <div className="overflow-hidden rounded-lg bg-[var(--elevated)] px-3 py-2">
-                    <span className="break-all font-mono text-[10.5px] text-[var(--muted-foreground)]">{mcpUrl}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
+              );
+            })()}
 
           </div>
         ) : (
