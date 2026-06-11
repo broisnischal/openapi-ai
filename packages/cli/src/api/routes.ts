@@ -167,6 +167,7 @@ async function handleSpecUpload(req: Request): Promise<Response> {
   try {
     const state = loadSpecFromText(content, filename);
     const suggestedVars = extractSuggestedVars(content, state.spec.baseUrl);
+    logBus.broadcastServerEvent({ kind: 'spec_changed' });
     return json({
       ok: true,
       spec: { title: state.spec.title, version: state.spec.version, baseUrl: state.spec.baseUrl },
@@ -186,6 +187,7 @@ async function handleSpecReloadUrl(req: Request): Promise<Response> {
   try {
     const state = await loadSpec(body.url);
     const suggestedVars = extractSuggestedVars(state.spec.raw, state.spec.baseUrl);
+    logBus.broadcastServerEvent({ kind: 'spec_changed' });
     return json({
       ok: true,
       spec: { title: state.spec.title, version: state.spec.version, baseUrl: state.spec.baseUrl },
@@ -198,7 +200,8 @@ async function handleSpecReloadUrl(req: Request): Promise<Response> {
 }
 
 function handleGetLogs(searchParams: URLSearchParams): Response {
-  const limit = Math.min(parseInt(searchParams.get('limit') ?? '500'), 2000);
+  const raw = parseInt(searchParams.get('limit') ?? '500', 10);
+  const limit = Math.min(Number.isFinite(raw) ? raw : 500, 2000);
   return json(dbQueries.getRecentLogs(limit));
 }
 
@@ -220,6 +223,7 @@ async function handleSetAuth(req: Request): Promise<Response> {
 }
 
 async function handleTestAuth(): Promise<Response> {
+  if (!hasState()) return badRequest('No spec loaded');
   const { spec } = getState();
   const authRow = dbQueries.getAuthConfig();
   const authConfig: AuthConfig = authRow ? JSON.parse(authRow.config) : { type: 'none' };
@@ -235,6 +239,7 @@ async function handleTestAuth(): Promise<Response> {
 }
 
 function handleGetEndpoints(): Response {
+  if (!hasState()) return json([]);
   return json(getState().operations);
 }
 
@@ -343,6 +348,7 @@ async function executeTool(
   args: Record<string, unknown>,
   cache: ToolCache = new Map(),
 ): Promise<{ text: string; isError: boolean }> {
+  if (!hasState()) return { text: 'No spec loaded.', isError: true };
   const { operations, spec } = getState();
 
   if (name === 'search_endpoints') {
@@ -1035,10 +1041,11 @@ async function handleExplorerRequest(req: Request): Promise<Response> {
   if (timeoutMs > 0) (fetchOpts as RequestInit & { signal: AbortSignal }).signal = AbortSignal.timeout(timeoutMs);
 
   // DNS pre-resolution for timing measurement
+  const parsedUrl = new URL(authedUrl);
   let dnsMs = 0;
   let resolvedAddr = '';
   try {
-    const u = new URL(authedUrl);
+    const u = parsedUrl;
     const h = u.hostname;
     const defaultPort = u.protocol === 'https:' ? 443 : 80;
     const port = u.port ? Number(u.port) : defaultPort;
@@ -1059,7 +1066,7 @@ async function handleExplorerRequest(req: Request): Promise<Response> {
     const resHeaders = Object.fromEntries(res.headers.entries());
     const ct = res.headers.get('content-type') ?? '';
 
-    const u = new URL(authedUrl);
+    const u = parsedUrl;
     const networkInfo = {
       scheme: u.protocol.replace(':', ''),
       host: u.host,

@@ -2044,10 +2044,14 @@ function ExplorerPage() {
   }, [dbLoaded]);
 
   // ── Load operations ───────────────────────────────────────────────────────
-  useEffect(() => {
-    apiClient<{ spec: { baseUrl: string } }>('/api/status')
-      .then(s => setBaseUrl(s.spec.baseUrl))
+  const refreshBaseUrl = () => {
+    apiClient<{ spec: { baseUrl: string } | null }>('/api/status')
+      .then(s => { if (s.spec) setBaseUrl(s.spec.baseUrl); })
       .catch(() => {});
+  };
+
+  useEffect(() => {
+    refreshBaseUrl();
     cacheGet<ParsedOperation[]>('spec_endpoints').then(cached => {
       if (cached && operations.length === 0) setOperations(cached);
     });
@@ -2057,6 +2061,11 @@ function ExplorerPage() {
     apiClient<InterceptRule[]>('/api/intercept')
       .then(rs => setInterceptRules(rs.filter(r => r.enabled === 1)))
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('cli-spec-changed', refreshBaseUrl);
+    return () => window.removeEventListener('cli-spec-changed', refreshBaseUrl);
   }, []);
 
   useEffect(() => {

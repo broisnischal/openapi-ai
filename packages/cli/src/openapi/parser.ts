@@ -23,6 +23,14 @@ export function parseSpecText(text: string, url?: string, name?: string): Parsed
   const servers = (doc.servers as Array<{ url: string }>) ?? [];
 
   let baseUrl = servers[0]?.url ?? '';
+
+  // Swagger 2.0: build baseUrl from host + basePath + schemes when servers[] is absent
+  if (!baseUrl && doc.swagger && doc.host) {
+    const scheme = (doc.schemes as string[] | undefined)?.[0] ?? 'https';
+    const basePath = typeof doc.basePath === 'string' ? doc.basePath.replace(/\/$/, '') : '';
+    baseUrl = `${scheme}://${doc.host}${basePath}`;
+  }
+
   // Fall back to spec source origin when servers[] is empty (common with NestJS swagger)
   if (!baseUrl && url) {
     try { baseUrl = new URL(url).origin; } catch { /* keep */ }

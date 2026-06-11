@@ -386,6 +386,75 @@ const MCP_HINTS: Record<McpClient, string> = {
   'http':           'Use this Streamable HTTP endpoint with any MCP-compatible client.',
 };
 
+// ─── Install block ────────────────────────────────────────────────────────────
+type InstallOS = 'mac-linux' | 'windows';
+
+const INSTALL_ROWS: Record<InstallOS, { key: string; cmd: string; dim?: boolean }[]> = {
+  'mac-linux': [
+    { key: 'install-curl', cmd: 'curl -fsSL https://studio.stroke.click/install.sh | sh' },
+    { key: 'install-bun',  cmd: 'bun add -g wasper-cli', dim: true },
+  ],
+  windows: [
+    { key: 'install-ps1',  cmd: 'irm https://studio.stroke.click/install.ps1 | iex' },
+    { key: 'install-npm',  cmd: 'npm install -g wasper-cli', dim: true },
+  ],
+};
+
+function InstallBlock({ copied, copy }: { copied: string | null; copy: (key: string, text: string) => void }) {
+  const [os, setOs] = useState<InstallOS>('mac-linux');
+
+  return (
+    <div className="mt-7">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <Terminal size={11} className="text-[var(--muted-foreground)]" />
+          <span className="text-[11px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">Install the CLI</span>
+        </div>
+        <div className="flex gap-0.5 rounded-md bg-[var(--elevated)] p-0.5">
+          {(['mac-linux', 'windows'] as InstallOS[]).map(t => (
+            <button
+              key={t}
+              onClick={() => setOs(t)}
+              className={cn(
+                'rounded px-2.5 py-1 text-[11px] font-medium transition-all duration-100 border-0 cursor-pointer font-sans',
+                os === t
+                  ? 'bg-[var(--background)] text-[var(--foreground)] shadow-sm'
+                  : 'bg-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground-secondary)]',
+              )}
+            >
+              {t === 'mac-linux' ? 'macOS / Linux' : 'Windows'}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--elevated)]">
+        {INSTALL_ROWS[os].map(({ key, cmd, dim }, i) => (
+          <div
+            key={key}
+            className={cn('flex items-center justify-between px-3.5 py-2.5', i < INSTALL_ROWS[os].length - 1 && 'border-b border-[var(--border)]')}
+          >
+            <code className={cn('font-mono text-[12px] select-all', dim ? 'text-[var(--muted-foreground)]' : 'text-[var(--foreground)]')}>
+              {cmd}
+            </code>
+            <button
+              onClick={() => copy(key, cmd)}
+              className={cn(
+                'ml-3 flex shrink-0 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 py-1 text-[11px] font-sans cursor-pointer transition-colors',
+                copied === key ? 'text-[#22c55e]' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
+              )}
+            >
+              {copied === key ? <Check size={10} /> : <Copy size={10} />}
+            </button>
+          </div>
+        ))}
+      </div>
+      <p className="mt-2 text-[11px] text-[var(--placeholder-foreground)]">
+        Then run <code className="font-mono">wasper --url &lt;spec-url&gt;</code> to launch the studio.
+      </p>
+    </div>
+  );
+}
+
 // ─── Overview page ────────────────────────────────────────────────────────────
 function OverviewPage() {
   const [status, setStatus] = useState<Status | null>(null);
@@ -404,6 +473,11 @@ function OverviewPage() {
   };
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    window.addEventListener('cli-spec-changed', load);
+    return () => window.removeEventListener('cli-spec-changed', load);
+  }, []);
 
   const specLoaded = !!status?.spec;
   const mcpUrl = `${CLI_BASE_URL}/mcp`;
@@ -609,47 +683,7 @@ function OverviewPage() {
               </div>
 
               {/* ── Install command ── */}
-              <div className="mt-7">
-                <div className="flex items-center gap-2 mb-2">
-                  <Terminal size={11} className="text-[var(--muted-foreground)]" />
-                  <span className="text-[11px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">Install the CLI</span>
-                </div>
-                <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--elevated)]">
-                  {/* curl */}
-                  <div className="flex items-center justify-between border-b border-[var(--border)] px-3.5 py-2.5">
-                    <code className="font-mono text-[12px] text-[var(--foreground)] select-all">
-                      curl -fsSL https://studio.stroke.click/install.sh | sh
-                    </code>
-                    <button
-                      onClick={() => copy('install-curl', 'curl -fsSL https://studio.stroke.click/install.sh | sh')}
-                      className={cn(
-                        'ml-3 flex shrink-0 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 py-1 text-[11px] font-sans cursor-pointer transition-colors',
-                        copied === 'install-curl' ? 'text-[#22c55e]' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
-                      )}
-                    >
-                      {copied === 'install-curl' ? <Check size={10} /> : <Copy size={10} />}
-                    </button>
-                  </div>
-                  {/* bun */}
-                  <div className="flex items-center justify-between px-3.5 py-2.5">
-                    <code className="font-mono text-[12px] text-[var(--muted-foreground)] select-all">
-                      bun add -g wasper-cli
-                    </code>
-                    <button
-                      onClick={() => copy('install-bun', 'bun add -g wasper-cli')}
-                      className={cn(
-                        'ml-3 flex shrink-0 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 py-1 text-[11px] font-sans cursor-pointer transition-colors',
-                        copied === 'install-bun' ? 'text-[#22c55e]' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
-                      )}
-                    >
-                      {copied === 'install-bun' ? <Check size={10} /> : <Copy size={10} />}
-                    </button>
-                  </div>
-                </div>
-                <p className="mt-2 text-[11px] text-[var(--placeholder-foreground)]">
-                  Then run <code className="font-mono">wasper --url &lt;spec-url&gt;</code> to launch the studio.
-                </p>
-              </div>
+              <InstallBlock copied={copied} copy={copy} />
             </div>
           </div>
         )}

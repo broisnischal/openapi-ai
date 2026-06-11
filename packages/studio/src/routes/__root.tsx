@@ -409,7 +409,6 @@ function AppShell() {
   const [features, setFeaturesState] = useState<Features>(DEFAULT_FEATURES);
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
-  const wsRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const toggleSidebar = () => setSidebarCollapsed(v => {
     const next = !v;
@@ -446,53 +445,35 @@ function AppShell() {
 
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
 
-  // Poll for CLI connection
+  // WebSocket drives connection state — no HTTP polling; WS open/close IS the health check
   useEffect(() => {
     let dead = false;
-    const check = async () => {
-      try {
-        await apiClient<unknown>('/api/status');
-        if (!dead) setConnected(true);
-      } catch {
-        if (!dead) setConnected(false);
-      }
-    };
-    check();
-    const t = setInterval(check, 4000);
-    return () => { dead = true; clearInterval(t); };
-  }, []);
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Load operations for Cmd+K
-  useEffect(() => {
-    if (!connected) return;
-    apiClient<ParsedOp[]>('/api/spec/endpoints').then(setOperations).catch(() => {});
-  }, [connected]);
-
-  // Global WebSocket — shared across pages for live features/logs
-  useEffect(() => {
-    if (!connected) {
-      wsRef.current?.close();
-      wsRef.current = null;
-      setWsConnected(false);
-      return;
-    }
-
-    // Fetch initial feature state
-    apiClient<Features>('/api/features').then(setFeaturesState).catch(() => {});
-
-    let dead = false;
     const connect = () => {
       if (dead) return;
       const ws = new WebSocket(LOG_WS_URL);
       wsRef.current = ws;
-      ws.onopen = () => { if (!dead) setWsConnected(true); };
-      ws.onclose = () => {
-        if (!dead) {
-          setWsConnected(false);
-          wsRetryRef.current = setTimeout(connect, 3000);
-        }
+
+      ws.onopen = () => {
+        if (dead) return;
+        setConnected(true);
+        setWsConnected(true);
+        apiClient<Features>('/api/features').then(setFeaturesState).catch(() => {});
+        apiClient<ParsedOp[]>('/api/spec/endpoints').then(setOperations).catch(() => {});
+        // Notify pages that may hold stale status (OverviewPage, ExplorerPage)
+        window.dispatchEvent(new CustomEvent('cli-spec-changed'));
       };
-      ws.onerror = () => { ws.close(); };
+
+      ws.onclose = () => {
+        if (dead) return;
+        setConnected(false);
+        setWsConnected(false);
+        retryTimer = setTimeout(connect, 3000);
+      };
+
+      ws.onerror = () => ws.close();
+
       ws.onmessage = (e) => {
         if (dead) return;
         try {
@@ -501,20 +482,26 @@ function AppShell() {
             setFeaturesState(msg.data as Features);
             return;
           }
-          // Forward log entries to any listening page
+          if (msg.type === 'server_event' && msg.kind === 'spec_changed') {
+            window.dispatchEvent(new CustomEvent('cli-spec-changed'));
+            apiClient<ParsedOp[]>('/api/spec/endpoints').then(setOperations).catch(() => {});
+            return;
+          }
           if (msg.id && msg.method) {
             window.dispatchEvent(new CustomEvent('cli-log', { detail: msg }));
           }
         } catch { /**/ }
       };
     };
+
     connect();
     return () => {
       dead = true;
-      if (wsRetryRef.current) clearTimeout(wsRetryRef.current);
+      if (retryTimer) clearTimeout(retryTimer);
       wsRef.current?.close();
+      wsRef.current = null;
     };
-  }, [connected]);
+  }, []);
 
   // Cmd+K is handled by GlobalHotkeys (inside HotkeysProvider) — no manual listener needed
 
