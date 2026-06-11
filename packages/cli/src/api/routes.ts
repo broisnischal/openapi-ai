@@ -6,6 +6,7 @@ import { extractSuggestedVars } from '../openapi/parser';
 import { getFeatures, setFeatures, readonlyViolation, type Features } from '../config';
 import { VERSION } from '../version';
 import { runWorkflow, type WorkflowStep } from '../workflows/engine';
+import { runAgentLoop, type ToolSchema, type ToolCache, type AgentEvent } from '../agent/harness';
 import dns from 'node:dns/promises';
 
 const CORS = {
@@ -255,8 +256,6 @@ async function handleSetSettings(req: Request): Promise<Response> {
 
 // ─── Tool definitions ────────────────────────────────────────────────────────
 
-interface ToolCall { tool: string; input: Record<string, unknown>; output: string; isError: boolean; }
-
 const TOOL_DEFS = {
   search_endpoints: {
     description: 'Search API endpoints by keyword, path, tag, or HTTP method.',
@@ -333,17 +332,6 @@ const TOOL_DEFS = {
   },
 };
 
-const ANTHROPIC_TOOLS = Object.entries(TOOL_DEFS).map(([name, def]) => ({
-  name,
-  description: def.description,
-  input_schema: { type: 'object', properties: def.params, required: def.required },
-}));
-
-const OPENAI_TOOLS = Object.entries(TOOL_DEFS).map(([name, def]) => ({
-  type: 'function',
-  function: { name, description: def.description, parameters: { type: 'object', properties: def.params, required: def.required } },
-}));
-
 // ─── Tool executor ────────────────────────────────────────────────────────────
 
 // Enforce a minimum gap between execute_api_request calls to avoid hammering the target API
@@ -353,13 +341,14 @@ const MIN_API_CALL_INTERVAL_MS = 400;
 async function executeTool(
   name: string,
   args: Record<string, unknown>,
-  cache: Map<string, string> = new Map(),
+  cache: ToolCache = new Map(),
 ): Promise<{ text: string; isError: boolean }> {
   const { operations, spec } = getState();
 
   if (name === 'search_endpoints') {
     const cacheKey = `search:${String(args.query ?? '').toLowerCase()}`;
-    if (cache.has(cacheKey)) return { text: cache.get(cacheKey)!, isError: false };
+    const hit = cache.get(cacheKey);
+    if (hit) return hit;
     const q = String(args.query ?? '').toLowerCase();
     const terms = q.split(/\s+/).filter(Boolean);
     const matches = operations
@@ -372,13 +361,15 @@ async function executeTool(
     const text = !matches.length
       ? `No endpoints found matching "${args.query}". Total: ${operations.length}.`
       : JSON.stringify({ count: matches.length, total: operations.length, endpoints: matches }, null, 2);
-    cache.set(cacheKey, text);
-    return { text, isError: false };
+    const result = { text, isError: false };
+    cache.set(cacheKey, result);
+    return result;
   }
 
   if (name === 'get_endpoint_schema') {
     const cacheKey = `schema:${String(args.operationId ?? '')}`;
-    if (cache.has(cacheKey)) return { text: cache.get(cacheKey)!, isError: false };
+    const hit = cache.get(cacheKey);
+    if (hit) return hit;
     const op = operations.find(o => o.operationId === args.operationId);
     if (!op) return { text: `Endpoint not found: "${args.operationId}"`, isError: true };
     const text = JSON.stringify({
@@ -386,8 +377,9 @@ async function executeTool(
       summary: op.summary ?? null, description: op.description ?? null, tags: op.tags,
       parameters: op.parameters, requestBody: op.requestBody ?? null, responses: op.responses,
     }, null, 2);
-    cache.set(cacheKey, text);
-    return { text, isError: false };
+    const result = { text, isError: false };
+    cache.set(cacheKey, result);
+    return result;
   }
 
   if (name === 'execute_api_request') {
@@ -612,276 +604,29 @@ async function executeTool(
   return { text: `Unknown tool: ${name}`, isError: true };
 }
 
-// ─── Agentic loops ────────────────────────────────────────────────────────────
+// ─── Agentic handler (uses harness) ──────────────────────────────────────────
 
-type Msg = { role: string; content: unknown; tool_call_id?: string };
 type Emit = (e: Record<string, unknown>) => void;
 
-async function fetchWithRetry(url: string, opts: RequestInit, emit: Emit, maxRetries = 3): Promise<Response> {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const res = await fetch(url, opts);
-    if (res.status !== 429 || attempt === maxRetries) return res;
-    const retryAfter = parseInt(res.headers.get('retry-after') ?? '0', 10);
-    const delay = retryAfter > 0 ? retryAfter * 1000 : Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 30000);
-    emit({ type: 'info', message: `Rate limited — retrying in ${Math.round(delay / 1000)}s… (attempt ${attempt + 1}/${maxRetries})` });
-    await new Promise(r => setTimeout(r, delay));
-  }
-  // unreachable, but satisfies TS
-  return fetch(url, opts);
-}
+// Build the ToolSchema array that the harness needs from our flat TOOL_DEFS
+const TOOL_SCHEMAS: ToolSchema[] = Object.entries(TOOL_DEFS).map(([name, def]) => ({
+  name,
+  description: def.description,
+  params: def.params,
+  required: def.required,
+}));
 
-const MAX_TOTAL_TOOLS = 40;
-const MAX_CONSECUTIVE_ERRORS = 5;
-const MAX_SAME_ENDPOINT_ERRORS = 3;
-
-async function anthropicAgentLoop(
-  apiKey: string, model: string, system: string, initialMessages: Msg[], emit: Emit,
-  toolCache: Map<string, string> = new Map(),
-): Promise<{ content: string; toolCalls: ToolCall[] }> {
-  const msgs: Msg[] = [...initialMessages];
-  const toolCalls: ToolCall[] = [];
-  let totalTools = 0;
-  let consecutiveErrors = 0;
-  const endpointErrors: Record<string, number> = {};
-
-  for (let iter = 0; iter < 40; iter++) {
-    const res = await fetchWithRetry('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model, max_tokens: 4096, system, messages: msgs, tools: ANTHROPIC_TOOLS, stream: true }),
-    }, emit);
-    if (!res.ok) throw new Error(`Anthropic error: ${await res.text()}`);
-
-    // Parse streaming SSE response
-    let fullText = '';
-    let stopReason = '';
-    const contentBlocks: Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }> = [];
-    const inputAccum: Record<number, string> = {};
-
-    const reader = res.body!.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const parts = buf.split('\n\n');
-      buf = parts.pop() ?? '';
-
-      for (const part of parts) {
-        let dataLine = '';
-        for (const line of part.split('\n')) {
-          if (line.startsWith('data: ')) { dataLine = line.slice(6); break; }
-        }
-        if (!dataLine || dataLine === '[DONE]') continue;
-        let ev: Record<string, unknown>;
-        try { ev = JSON.parse(dataLine) as Record<string, unknown>; } catch { continue; }
-
-        const type = ev.type as string;
-        if (type === 'content_block_start') {
-          const idx = ev.index as number;
-          const cb = ev.content_block as { type: string; id?: string; name?: string };
-          contentBlocks[idx] = { type: cb.type, id: cb.id, name: cb.name };
-          if (cb.type === 'tool_use') inputAccum[idx] = '';
-        } else if (type === 'content_block_delta') {
-          const idx = ev.index as number;
-          const delta = ev.delta as { type: string; text?: string; partial_json?: string };
-          if (delta.type === 'text_delta' && delta.text) {
-            fullText += delta.text;
-            if (!contentBlocks[idx]) contentBlocks[idx] = { type: 'text', text: '' };
-            contentBlocks[idx].text = (contentBlocks[idx].text ?? '') + delta.text;
-            emit({ type: 'text_delta', text: delta.text });
-          } else if (delta.type === 'input_json_delta' && delta.partial_json) {
-            inputAccum[idx] = (inputAccum[idx] ?? '') + delta.partial_json;
-          }
-        } else if (type === 'content_block_stop') {
-          const idx = ev.index as number;
-          if (contentBlocks[idx]?.type === 'tool_use') {
-            try { contentBlocks[idx].input = JSON.parse(inputAccum[idx] ?? '{}'); }
-            catch { contentBlocks[idx].input = {}; }
-          }
-        } else if (type === 'message_delta') {
-          const delta = ev.delta as { stop_reason?: string };
-          if (delta.stop_reason) stopReason = delta.stop_reason;
-        }
-      }
-    }
-
-    if (stopReason !== 'tool_use') return { content: fullText, toolCalls };
-
-    // Guard: stop if too many tools used
-    if (totalTools >= MAX_TOTAL_TOOLS) {
-      return { content: `Agent stopped: reached ${MAX_TOTAL_TOOLS} tool calls. Please break your request into smaller steps.`, toolCalls };
-    }
-
-    msgs.push({ role: 'assistant', content: contentBlocks });
-    const toolResults: Array<{ type: string; tool_use_id: string; content: string }> = [];
-    for (const block of contentBlocks) {
-      if (block.type !== 'tool_use' || !block.id || !block.name) continue;
-      totalTools++;
-      emit({ type: 'tool_start', tool: block.name, input: block.input ?? {} });
-      const result = await executeTool(block.name, block.input ?? {}, toolCache);
-      emit({ type: 'tool_done', tool: block.name, input: block.input ?? {}, output: result.text, isError: result.isError });
-      toolCalls.push({ tool: block.name, input: block.input ?? {}, output: result.text, isError: result.isError });
-
-      if (result.isError) {
-        consecutiveErrors++;
-        // Track per-endpoint repeated failures
-        if (block.name === 'execute_api_request' && block.input?.operationId) {
-          const eid = String(block.input.operationId);
-          endpointErrors[eid] = (endpointErrors[eid] ?? 0) + 1;
-          if (endpointErrors[eid] >= MAX_SAME_ENDPOINT_ERRORS) {
-            const stopContent = result.text + `\n\n[AGENT LOOP STOPPED: endpoint "${eid}" failed ${MAX_SAME_ENDPOINT_ERRORS} times — stopping to avoid loop]`;
-            toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: stopContent });
-            msgs.push({ role: 'user', content: toolResults });
-            return { content: `Endpoint "${eid}" failed ${MAX_SAME_ENDPOINT_ERRORS} times. Last error: ${result.text}`, toolCalls };
-          }
-        }
-        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-          const stopMsg = `Stopped after ${MAX_CONSECUTIVE_ERRORS} consecutive errors. Last: ${result.text}`;
-          const stopContent = result.text + `\n\n[AGENT LOOP STOPPED: ${stopMsg}]`;
-          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: stopContent });
-          msgs.push({ role: 'user', content: toolResults });
-          return { content: stopMsg, toolCalls };
-        }
-      } else {
-        consecutiveErrors = 0;
-      }
-      toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: result.text });
-    }
-    if (!toolResults.length) return { content: fullText, toolCalls };
-    msgs.push({ role: 'user', content: toolResults });
-  }
-  return { content: '(max iterations reached)', toolCalls };
-}
-
-async function openaiCompatibleLoop(
-  base: string, apiKey: string | undefined, model: string, extraHeaders: Record<string, string>,
-  system: string, initialMessages: Msg[], emit: Emit,
-  toolCache: Map<string, string> = new Map(),
-): Promise<{ content: string; toolCalls: ToolCall[] }> {
-  const msgs: Msg[] = [{ role: 'system', content: system }, ...initialMessages];
-  const toolCalls: ToolCall[] = [];
-  const authHeaders: Record<string, string> = {};
-  if (apiKey) authHeaders['Authorization'] = `Bearer ${apiKey}`;
-  let totalTools = 0;
-  let consecutiveErrors = 0;
-  const endpointErrors: Record<string, number> = {};
-
-  for (let iter = 0; iter < 40; iter++) {
-    const res = await fetchWithRetry(`${base}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders, ...extraHeaders },
-      body: JSON.stringify({ model, messages: msgs, tools: OPENAI_TOOLS, tool_choice: 'auto', stream: true }),
-    }, emit);
-    if (!res.ok) throw new Error(await res.text());
-
-    // Parse streaming SSE response
-    let fullContent = '';
-    let finishReason = '';
-    const tcAccum: Record<number, { id: string; name: string; args: string }> = {};
-
-    const reader = res.body!.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
-
-    outer: while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const parts = buf.split('\n\n');
-      buf = parts.pop() ?? '';
-
-      for (const part of parts) {
-        let data = '';
-        for (const line of part.split('\n')) {
-          if (line.startsWith('data: ')) { data = line.slice(6); break; }
-        }
-        if (!data) continue;
-        if (data === '[DONE]') break outer;
-
-        let ev: Record<string, unknown>;
-        try { ev = JSON.parse(data) as Record<string, unknown>; } catch { continue; }
-
-        // Provider error returned in stream body (e.g. Groq rate limit)
-        if (ev.object === 'error') throw new Error(JSON.stringify(ev));
-
-        const choices = ev.choices as Array<Record<string, unknown>> | undefined;
-        const choice = choices?.[0];
-        if (!choice) continue;
-
-        const fr = choice.finish_reason as string | null;
-        if (fr) finishReason = fr;
-
-        const delta = choice.delta as Record<string, unknown> | undefined;
-        if (!delta) continue;
-
-        if (typeof delta.content === 'string' && delta.content) {
-          fullContent += delta.content;
-          emit({ type: 'text_delta', text: delta.content });
-        }
-
-        const tcDeltas = delta.tool_calls as Array<{
-          index: number; id?: string;
-          function?: { name?: string; arguments?: string };
-        }> | undefined;
-        if (tcDeltas) {
-          for (const tc of tcDeltas) {
-            if (!tcAccum[tc.index]) tcAccum[tc.index] = { id: '', name: '', args: '' };
-            const entry = tcAccum[tc.index]!;
-            if (tc.id) entry.id += tc.id;
-            if (tc.function?.name) entry.name += tc.function.name;
-            if (tc.function?.arguments) entry.args += tc.function.arguments;
-          }
-        }
-      }
-    }
-
-    if (finishReason !== 'tool_calls') return { content: fullContent, toolCalls };
-
-    // Guard: stop if too many tools used
-    if (totalTools >= MAX_TOTAL_TOOLS) {
-      return { content: `Agent stopped: reached ${MAX_TOTAL_TOOLS} tool calls. Please break your request into smaller steps.`, toolCalls };
-    }
-
-    // Build tool call message and execute
-    const msgToolCalls = Object.values(tcAccum).map(tc => ({
-      id: tc.id, type: 'function',
-      function: { name: tc.name, arguments: tc.args },
-    }));
-    msgs.push({ role: 'assistant', content: fullContent || null, tool_calls: msgToolCalls } as Msg);
-
-    for (const tc of Object.values(tcAccum)) {
-      let args: Record<string, unknown> = {};
-      try { args = JSON.parse(tc.args); } catch { /* */ }
-      totalTools++;
-      emit({ type: 'tool_start', tool: tc.name, input: args });
-      const result = await executeTool(tc.name, args, toolCache);
-      emit({ type: 'tool_done', tool: tc.name, input: args, output: result.text, isError: result.isError });
-      toolCalls.push({ tool: tc.name, input: args, output: result.text, isError: result.isError });
-      msgs.push({ role: 'tool', tool_call_id: tc.id, content: result.text });
-      if (result.isError) {
-        consecutiveErrors++;
-        if (tc.name === 'execute_api_request' && args.operationId) {
-          const eid = String(args.operationId);
-          endpointErrors[eid] = (endpointErrors[eid] ?? 0) + 1;
-          if (endpointErrors[eid] >= MAX_SAME_ENDPOINT_ERRORS) {
-            return { content: `Endpoint "${eid}" failed ${MAX_SAME_ENDPOINT_ERRORS} times. Last error: ${result.text}`, toolCalls };
-          }
-        }
-        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-          return { content: `Stopped after ${MAX_CONSECUTIVE_ERRORS} consecutive errors. Last: ${result.text}`, toolCalls };
-        }
-      } else {
-        consecutiveErrors = 0;
-      }
-    }
-  }
-  return { content: '(max iterations reached)', toolCalls };
-}
-
-// ─── Handler ─────────────────────────────────────────────────────────────────
+// Canonical provider model defaults
+const PROVIDER_DEFAULTS: Record<string, { model: string; baseUrl?: string }> = {
+  anthropic: { model: 'claude-haiku-4-5-20251001' },
+  openai: { model: 'gpt-4o-mini', baseUrl: 'https://api.openai.com' },
+  mistral: { model: 'mistral-small-latest', baseUrl: 'https://api.mistral.ai' },
+  groq: { model: 'llama-3.1-70b-versatile', baseUrl: 'https://api.groq.com/openai' },
+  'github-copilot': { model: 'gpt-4o', baseUrl: 'https://api.githubcopilot.com' },
+  ollama: { model: 'llama3', baseUrl: 'http://localhost:11434' },
+  gemini: { model: 'gemini-1.5-flash' },
+  custom: { model: '' },
+};
 
 async function handleAiChat(req: Request): Promise<Response> {
   let body: { messages: { role: string; content: string }[]; extra_context?: string };
@@ -889,19 +634,35 @@ async function handleAiChat(req: Request): Promise<Response> {
 
   const settingsRow = dbQueries.getSettings();
   const settings = settingsRow ? JSON.parse(settingsRow.value) : {};
-  const ai = (settings.ai ?? {}) as { provider?: string; apiKey?: string; model?: string; baseUrl?: string; customInstructions?: string };
+  const ai = (settings.ai ?? {}) as {
+    provider?: string; apiKey?: string; model?: string; baseUrl?: string;
+    customInstructions?: string;
+    maxTokens?: number;
+    stepTimeoutMs?: number;
+  };
 
+  const provider = (ai.provider ?? 'anthropic') as Parameters<typeof runAgentLoop>[0]['provider'];
+  const providerDefaults = PROVIDER_DEFAULTS[provider] ?? { model: '' };
+  const requiresKey = provider !== 'ollama' && provider !== 'custom';
+  if (requiresKey && !ai.apiKey) {
+    return json({ error: 'No AI API key configured. Go to Settings → AI Provider to add one.' }, 400);
+  }
+
+  if (!hasState()) return json({ error: 'No spec loaded.' }, 400);
   const { spec, operations } = getState();
-  const preview = operations.slice(0, 40).map(op => `- ${op.method.toUpperCase()} ${op.path}${op.summary ? `: ${op.summary}` : ''}`).join('\n');
+  const preview = operations.slice(0, 40).map(op =>
+    `- ${op.method.toUpperCase()} ${op.path}${op.summary ? `: ${op.summary}` : ''}`
+  ).join('\n');
   const activeAuth = dbQueries.getActiveProfile();
   const authLine = activeAuth
     ? `Active auth: "${activeAuth.name}" (${activeAuth.type})`
-    : 'No active auth profile. If the API requires auth, call list_auth_profiles first, then set_active_auth, or login and call save_auth_token.';
+    : 'No active auth profile. Call list_auth_profiles, then set_active_auth or save_auth_token.';
 
-  // Load conversation memory (last 20 messages = ~10 exchanges)
   const memory = dbQueries.getMemory(20);
   const memorySection = memory.length
-    ? `\n## Memory from previous sessions\n${memory.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.slice(0, 300)}${m.content.length > 300 ? '…' : ''}`).join('\n')}\n`
+    ? `\n## Memory from previous sessions\n${memory.map(m =>
+        `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.slice(0, 300)}${m.content.length > 300 ? '…' : ''}`
+      ).join('\n')}\n`
     : '';
 
   const system = `You are an AI assistant for the "${spec.title}" API (v${spec.version}). Base URL: ${spec.baseUrl}.
@@ -910,100 +671,61 @@ ${preview}${operations.length > 40 ? `\n... and ${operations.length - 40} more` 
 
 ${authLine}
 ${memorySection}
-Tools available:
-- search_endpoints / get_endpoint_schema: explore API structure (results are cached — do NOT call the same query twice)
-- execute_api_request: call an endpoint
-- list_auth_profiles: list all saved auth profiles (name, type, active)
-- set_active_auth(name): switch to a saved profile before making requests
-- save_auth_token(name, token): save bearer/API key after successful login; use token_type="basic" with username+password for HTTP Basic auth
-- fetch_url: fetch external docs
-- dns_lookup: DNS resolution / connectivity
-- get_recent_logs: recent request/response traffic
-- run_security_check: security analysis on an endpoint
+Tools:
+- search_endpoints / get_endpoint_schema — explore API structure (results cached; never repeat the same query)
+- execute_api_request — call an endpoint
+- list_auth_profiles / set_active_auth / save_auth_token — manage credentials
+  • save_auth_token supports token_type="basic" with username+password for HTTP Basic auth
+- fetch_url — external docs
+- dns_lookup — connectivity diagnostics
+- get_recent_logs — proxy traffic history
+- run_security_check — static security analysis
 
-Authentication workflow: if requests return 401/403, call list_auth_profiles first. If a profile exists, call set_active_auth. If none, find and call the login endpoint, extract the token from the response, then call save_auth_token immediately. After saving, retry the original request.
+Auth workflow: 401/403 → list_auth_profiles → set_active_auth OR find login endpoint → save_auth_token → retry.
 
-IMPORTANT:
-- Do NOT re-search endpoints you already found. Use cached results.
-- If an endpoint returns an error, diagnose it (check the schema, check auth) and fix the root cause before retrying. If the same endpoint fails 3 times the agent will be forcibly stopped.
-- Do not retry without changing something.
-- Space out API calls — do not fire multiple requests in rapid succession.
+Rules:
+- Never repeat a search you already ran — results are cached.
+- Diagnose errors before retrying. Three failures on the same endpoint stops the agent.
+- Do not fire rapid successive API requests.
 
-Be concise and practical. Format code and JSON in code blocks.${ai.customInstructions ? `\n\n---\n## Custom instructions\n${ai.customInstructions}` : ''}${body.extra_context ? `\n\n---\n## Current context\n${body.extra_context}` : ''}`;
-
-  const provider = ai.provider ?? 'anthropic';
-  const requiresKey = provider !== 'ollama' && provider !== 'custom';
-  if (requiresKey && !ai.apiKey) {
-    return json({ error: 'No AI API key configured. Go to Settings → AI Provider to add one.' }, 400);
-  }
+Be concise. Format code and JSON in fenced blocks.${ai.customInstructions ? `\n\n---\n## Custom instructions\n${ai.customInstructions}` : ''}${body.extra_context ? `\n\n---\n## Context\n${body.extra_context}` : ''}`;
 
   const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
   const writer = writable.getWriter();
   const enc = new TextEncoder();
   const emit: Emit = (e) => { writer.write(enc.encode(`data: ${JSON.stringify(e)}\n\n`)).catch(() => {}); };
 
-  const msgs = body.messages as Msg[];
-  const toolCache = new Map<string, string>();
+  const msgs = body.messages as { role: string; content: unknown }[];
+  const toolCache: ToolCache = new Map();
+  const abortCtrl = new AbortController();
 
-  // Extract the user's last message to save to memory after the response
   const lastUserMsg = [...msgs].reverse().find(m => m.role === 'user');
   const userMemoryContent = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : null;
 
   (async () => {
     try {
-      let result: { content: string; toolCalls: ToolCall[] };
-
-      if (provider === 'anthropic') {
-        result = await anthropicAgentLoop(ai.apiKey!, ai.model || 'claude-haiku-4-5-20251001', system, msgs, emit, toolCache);
-      } else if (provider === 'openai') {
-        const base = (ai.baseUrl || 'https://api.openai.com').replace(/\/$/, '');
-        result = await openaiCompatibleLoop(base, ai.apiKey, ai.model || 'gpt-4o-mini', {}, system, msgs, emit, toolCache);
-      } else if (provider === 'mistral') {
-        const base = (ai.baseUrl || 'https://api.mistral.ai').replace(/\/$/, '');
-        result = await openaiCompatibleLoop(base, ai.apiKey, ai.model || 'mistral-small-latest', {}, system, msgs, emit, toolCache);
-      } else if (provider === 'github-copilot') {
-        const base = (ai.baseUrl || 'https://api.githubcopilot.com').replace(/\/$/, '');
-        result = await openaiCompatibleLoop(base, ai.apiKey, ai.model || 'gpt-4o', {
-          'Copilot-Integration-Id': 'vscode-chat',
-          'Editor-Version': 'vscode/1.85.0',
-        }, system, msgs, emit, toolCache);
-      } else if (provider === 'groq') {
-        const base = (ai.baseUrl || 'https://api.groq.com/openai').replace(/\/$/, '');
-        result = await openaiCompatibleLoop(base, ai.apiKey, ai.model || 'llama-3.1-70b-versatile', {}, system, msgs, emit, toolCache);
-      } else if (provider === 'custom') {
-        if (!ai.baseUrl) { emit({ type: 'error', message: 'Custom provider requires a Base URL.' }); await writer.close(); return; }
-        result = await openaiCompatibleLoop(ai.baseUrl.replace(/\/$/, ''), ai.apiKey, ai.model || '', {}, system, msgs, emit, toolCache);
-      } else if (provider === 'ollama') {
-        const base = (ai.baseUrl || 'http://localhost:11434').replace(/\/$/, '');
-        const res = await fetch(`${base}/api/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: ai.model || 'llama3', messages: [{ role: 'system', content: system }, ...msgs], stream: false }),
-        });
-        const d = await res.json() as { message: { content: string } };
-        result = { content: d.message.content ?? '', toolCalls: [] };
-      } else if (provider === 'gemini') {
-        const model = ai.model || 'gemini-1.5-flash';
-        const base = (ai.baseUrl || 'https://generativelanguage.googleapis.com').replace(/\/$/, '');
-        const res = await fetch(`${base}/v1beta/models/${model}:generateContent?key=${ai.apiKey}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: system }] },
-            contents: msgs.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
-            generationConfig: { maxOutputTokens: 4096 },
-          }),
-        });
-        const d = await res.json() as { candidates: { content: { parts: { text: string }[] } }[] };
-        result = { content: d.candidates[0]?.content.parts[0]?.text ?? '', toolCalls: [] };
-      } else {
-        emit({ type: 'error', message: `Unknown provider: ${provider}` });
-        await writer.close();
-        return;
-      }
+      const result = await runAgentLoop(
+        {
+          provider,
+          apiKey: ai.apiKey,
+          model: ai.model || providerDefaults.model,
+          baseUrl: ai.baseUrl || providerDefaults.baseUrl,
+          maxTokens: ai.maxTokens ?? 4096,
+          stepTimeoutMs: ai.stepTimeoutMs ?? 60_000,
+          parallelTools: true,
+          enablePromptCache: true,
+        },
+        system,
+        msgs as { role: string; content: unknown }[],
+        TOOL_SCHEMAS,
+        (name, args) => executeTool(name, args, toolCache),
+        emit as (e: AgentEvent) => void,
+        abortCtrl.signal,
+        toolCache,
+      );
 
       // Persist to memory
-      if (result.content && result.content !== '(max iterations reached)') {
+      if (result.content && result.stopReason !== 'max_iterations') {
         try {
           if (userMemoryContent) dbQueries.saveMemory('user', userMemoryContent.slice(0, 1000));
           dbQueries.saveMemory('assistant', result.content.slice(0, 1000));
@@ -1011,20 +733,22 @@ Be concise and practical. Format code and JSON in code blocks.${ai.customInstruc
         } catch { /* non-fatal */ }
       }
 
-      emit({ type: 'done', content: result.content, toolCalls: result.toolCalls });
+      emit({
+        type: 'done',
+        content: result.content,
+        toolCalls: result.toolCalls,
+        stopReason: result.stopReason,
+        tokens: result.tokens,
+      });
     } catch (e) {
       emit({ type: 'error', message: e instanceof Error ? e.message : String(e) });
     } finally {
-      try { await writer.close(); } catch { /* stream already closed by timeout or client disconnect */ }
+      try { await writer.close(); } catch { /* already closed */ }
     }
   })();
 
   return new Response(readable, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      ...CORS,
-    },
+    headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', ...CORS },
   });
 }
 
