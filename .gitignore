@@ -21,7 +21,7 @@ packages/cli/data/*.db-shm
 packages/cli/data/*.db-wal
 
 # ── Logs ─────────────────────────────────────────────────────────────
-logs/
+/logs/
 *.log
 *.log.*
 
