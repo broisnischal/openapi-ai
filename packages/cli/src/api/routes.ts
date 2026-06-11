@@ -420,16 +420,80 @@ async function executeTool(
     const bodyStr = reqBody !== undefined ? (typeof reqBody === 'string' ? reqBody : JSON.stringify(reqBody)) : null;
     if (bodyStr !== null && op.requestBody?.contentType) authedHeaders['Content-Type'] = op.requestBody.contentType;
 
+    const logId = randomUUID();
     try {
       const start = Date.now();
       const res = await fetch(authedUrl, { method: op.method.toUpperCase(), headers: authedHeaders, body: bodyStr ?? undefined });
-      const text = await res.text();
+      const responseText = await res.text();
       const latency = Date.now() - start;
-      let pretty = text;
-      try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch { /* */ }
+      const resHeaders = Object.fromEntries(res.headers.entries());
+
+      // Persist to request_logs and broadcast live to the UI
+      dbQueries.insertLog({
+        id: logId,
+        source: 'ai',
+        tool_name: String(args.operationId ?? op.operationId),
+        method: op.method.toUpperCase(),
+        url: authedUrl,
+        request_headers: JSON.stringify(authedHeaders),
+        request_body: bodyStr,
+        status_code: res.status,
+        response_headers: JSON.stringify(resHeaders),
+        response_body: responseText.slice(0, 8192),
+        latency_ms: latency,
+        error: null,
+      });
+      logBus.emit({
+        id: logId,
+        source: 'ai',
+        tool_name: String(args.operationId ?? op.operationId),
+        method: op.method.toUpperCase(),
+        url: authedUrl,
+        request_headers: JSON.stringify(authedHeaders),
+        request_body: bodyStr,
+        status_code: res.status,
+        response_headers: JSON.stringify(resHeaders),
+        response_body: responseText.slice(0, 2048),
+        latency_ms: latency,
+        error: null,
+        created_at: Date.now(),
+      });
+
+      let pretty = responseText;
+      try { pretty = JSON.stringify(JSON.parse(responseText), null, 2); } catch { /* not JSON */ }
       return { text: `HTTP ${res.status} (${latency}ms)\n\n${pretty}`, isError: !res.ok };
     } catch (e) {
-      return { text: `Network error: ${e instanceof Error ? e.message : String(e)}`, isError: true };
+      const errMsg = e instanceof Error ? e.message : String(e);
+      dbQueries.insertLog({
+        id: logId,
+        source: 'ai',
+        tool_name: String(args.operationId ?? op.operationId),
+        method: op.method.toUpperCase(),
+        url: authedUrl,
+        request_headers: JSON.stringify(authedHeaders),
+        request_body: bodyStr,
+        status_code: null,
+        response_headers: null,
+        response_body: null,
+        latency_ms: null,
+        error: errMsg,
+      });
+      logBus.emit({
+        id: logId,
+        source: 'ai',
+        tool_name: String(args.operationId ?? op.operationId),
+        method: op.method.toUpperCase(),
+        url: authedUrl,
+        request_headers: null,
+        request_body: bodyStr,
+        status_code: null,
+        response_headers: null,
+        response_body: null,
+        latency_ms: null,
+        error: errMsg,
+        created_at: Date.now(),
+      });
+      return { text: `Network error: ${errMsg}`, isError: true };
     }
   }
 
