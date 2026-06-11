@@ -8,6 +8,7 @@ on:
     paths:
       - 'packages/studio/**'
       - '.github/workflows/deploy-studio.yml'
+  workflow_call:   # called by release.yml on every tag push
   workflow_dispatch:
 
 jobs:
