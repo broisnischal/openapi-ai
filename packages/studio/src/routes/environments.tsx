@@ -1,12 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { cn } from '../lib/utils';
 import { useApp } from '../context';
 import {
-  saveEnvironment, deleteEnvironment,
-  ENV_COLORS, type Environment, type EnvVar,
+  saveEnvironment, deleteEnvironment, getSpecVars,
+  type Environment, type EnvVar,
 } from '../lib/env';
-import { Plus, Trash2, Check, X, Edit2 } from 'lucide-react';
+import { Plus, Trash2, Check, X, Edit2, Globe } from 'lucide-react';
 
 export const Route = createFileRoute('/environments')({ component: EnvironmentsPage });
 
@@ -14,7 +14,7 @@ let _seq = 0;
 const uid = () => `${Date.now()}-${++_seq}`;
 
 const EMPTY_ENV: () => Environment = () => ({
-  id: uid(), name: '', color: ENV_COLORS[0]!, vars: [], headers: [],
+  id: uid(), name: '', color: '', vars: [], headers: [],
 });
 
 function VarTable({ vars, onChange, ph = ['VARIABLE_NAME', 'value'], labels = ['Variable', 'Value'] }: {
@@ -81,19 +81,6 @@ function EnvEditor({ env, onSave, onCancel }: {
           onChange={e => set({ name: e.target.value })}
           autoFocus
         />
-        <div className="flex gap-1.5">
-          {ENV_COLORS.map(c => (
-            <button
-              key={c}
-              onClick={() => set({ color: c })}
-              className="w-4 h-4 rounded-full border-2 transition-all cursor-pointer flex-shrink-0"
-              style={{
-                background: c,
-                borderColor: draft.color === c ? 'var(--foreground)' : 'transparent',
-              }}
-            />
-          ))}
-        </div>
       </div>
 
       <div className="py-3">
@@ -128,6 +115,13 @@ function EnvironmentsPage() {
   const { envs, activeEnvId, setActiveEnvId, reloadEnvs } = useApp();
   const [editing, setEditing] = useState<Environment | null>(null);
   const [creating, setCreating] = useState(false);
+  const [specVars, setSpecVarsState] = useState<Record<string, string>>(() => getSpecVars());
+
+  useEffect(() => {
+    const refresh = () => setSpecVarsState({ ...getSpecVars() });
+    window.addEventListener('cli-spec-changed', refresh);
+    return () => window.removeEventListener('cli-spec-changed', refresh);
+  }, []);
 
   const handleSave = async (e: Environment) => {
     await saveEnvironment(e);
@@ -151,7 +145,8 @@ function EnvironmentsPage() {
         <div>
           <h1 className="text-[20px] font-bold tracking-tight text-[var(--foreground)]">Environments</h1>
           <p className="text-[13px] text-[var(--muted-foreground)] mt-1">
-            Define variables like <code className="font-mono text-[var(--primary)]">{'{{BASE_URL}}'}</code> and switch between them in the explorer.
+            Define variables like <code className="font-mono text-[var(--primary)]">{'{{API_KEY}}'}</code> and switch between them in the explorer.
+            <code className="font-mono text-[var(--primary)] ml-1">{'{{baseUrl}}'}</code> is always available from the loaded spec.
           </p>
         </div>
         <button
@@ -164,6 +159,27 @@ function EnvironmentsPage() {
       </div>
 
       <div className="px-8 py-6 max-w-[700px] flex flex-col gap-3">
+
+        {/* Spec variables — auto-populated from the loaded spec */}
+        {Object.keys(specVars).length > 0 && (
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden">
+            <div className="flex items-center gap-2.5 px-4 py-3 border-b border-[var(--border)]">
+              <Globe size={13} className="text-[var(--primary)] flex-shrink-0" />
+              <span className="text-[13.5px] font-semibold text-[var(--foreground)] flex-1">Spec Variables</span>
+              <span className="text-[11px] text-[var(--placeholder-foreground)]">auto-populated · always active · read-only</span>
+            </div>
+            <div className="px-4 py-3 flex flex-wrap gap-1.5">
+              {Object.entries(specVars).map(([key, val]) => (
+                <div key={key} className="flex items-center gap-1 text-[11px] font-mono bg-[var(--elevated)] text-[var(--muted-foreground)] rounded px-2 py-1">
+                  <span className="text-[var(--primary)]">{`{{${key}}}`}</span>
+                  <span className="opacity-40 select-none">→</span>
+                  <span className="text-[var(--foreground)] opacity-70 max-w-[280px] truncate">{val}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {creating && (
           <EnvEditor
             env={EMPTY_ENV()}
@@ -196,7 +212,6 @@ function EnvironmentsPage() {
               )}
             >
               <div className="flex items-center gap-3 px-4 py-3">
-                <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: env.color }} />
                 <button
                   className={cn(
                     'flex-1 text-left text-[13.5px] font-semibold bg-transparent border-0 cursor-pointer p-0 transition-colors',

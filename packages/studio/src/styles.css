@@ -486,25 +486,20 @@
   .tab-item.active { color: var(--foreground); background: var(--background); border-color: var(--border); margin-bottom: -1px; }
 
   .sub-tab-bar {
-    display: flex; border-bottom: 1px solid var(--border); background: var(--card);
-    padding: 0 8px; gap: 2px; align-items: center; height: 36px; overflow-x: auto; flex-shrink: 0;
+    display: flex; border-bottom: 1px solid var(--border); background: transparent;
+    padding: 0 12px; gap: 0; align-items: stretch; height: 36px; overflow-x: auto; flex-shrink: 0;
   }
   .sub-tab {
     display: inline-flex; align-items: center; gap: 4px;
-    padding: 0 9px; height: 26px; border-radius: 5px;
-    font-size: 12px; font-weight: 500; letter-spacing: -0.01em;
+    padding: 0 10px; height: 100%;
+    font-size: 12px; font-weight: 450; letter-spacing: -0.01em;
     cursor: pointer; color: var(--muted-foreground); border: none; background: none;
-    font-family: 'Inter', system-ui, sans-serif; white-space: nowrap;
-    transition: color 0.1s ease, background 0.1s ease; flex-shrink: 0;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    font-family: inherit; white-space: nowrap;
+    transition: color 0.1s ease, border-color 0.12s ease; flex-shrink: 0;
   }
-  .sub-tab:hover {
-    color: var(--foreground-secondary);
-    background: color-mix(in srgb, var(--foreground) 6%, transparent);
-  }
-  .sub-tab.active {
-    color: var(--foreground); font-weight: 600;
-    background: color-mix(in srgb, var(--foreground) 9%, transparent);
-  }
+  .sub-tab:hover { color: var(--foreground-secondary); }
+  .sub-tab.active { color: var(--foreground); font-weight: 500; border-bottom-color: var(--foreground); }
 
   /* ── Method badges ────────────────────────────── */
   .method-badge {
@@ -596,7 +591,7 @@
     background-color: transparent !important;
     font-family: 'JetBrains Mono', 'GeistMono', ui-monospace, monospace !important;
     font-size: 12.5px; line-height: 1.65;
-    white-space: pre-wrap; word-break: break-all; overflow: auto;
+    white-space: pre-wrap; word-break: break-all; overflow-wrap: break-word;
   }
   .shiki-wrap code,
   .shiki-wrap code[style] { background: transparent !important; background-color: transparent !important; font-family: inherit !important; }
@@ -810,8 +805,8 @@
     transition: color 0.1s, border-color 0.12s, background 0.1s;
     white-space: nowrap; max-width: 180px; user-select: none;
   }
-  .tab-strip .tab-item:hover { color: var(--foreground-secondary); background: color-mix(in srgb, var(--foreground) 4%, transparent); }
-  .tab-strip .tab-item.active { color: var(--foreground); background: transparent; border-bottom-color: var(--accent); }
+  .tab-strip .tab-item:hover { color: var(--foreground-secondary); }
+  .tab-strip .tab-item.active { color: var(--foreground); font-weight: 500; background: transparent; border-bottom-color: var(--foreground); }
 
   /* ── URL bar ──────────────────────────────────── */
   .url-input {

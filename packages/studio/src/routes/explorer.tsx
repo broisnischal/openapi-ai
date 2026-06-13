@@ -1,5 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { FileTree as PierreFileTree, useFileTree } from '@pierre/trees/react';
+import '@pierre/trees/web-components';
 import { apiClient } from '../lib/api';
 import { cacheGet, cacheSet } from '../lib/cache';
 import { JsonViewer } from '../components/JsonViewer';
@@ -10,7 +12,7 @@ import { COMMON_HEADERS, HEADER_VALUE_SUGGESTIONS, RAW_BODY_TYPES, jqFilter, gen
 import type { CodeRequest } from '../lib/codegen';
 import { cn } from '../lib/utils';
 import { useApp } from '../context';
-import { resolveVars, type Environment } from '../lib/env';
+import { resolveVars, setSpecVars, type Environment } from '../lib/env';
 import {
   listWorkspaces, saveWorkspace, deleteWorkspace, defaultWorkspace,
   getActiveWorkspaceId, setActiveWorkspaceId, DEFAULT_WORKSPACE_ID,
@@ -18,8 +20,8 @@ import {
 } from '../lib/workspace';
 import { dbGet, dbPut, dbGetAll, dbDel } from '../lib/storage';
 import {
-  Search, Plus, X, Send, Copy, Check, ChevronRight, ChevronDown,
-  RotateCcw, Download, Bot, Folder, FolderOpen, Cookie, Eye, Lock,
+  Search, Plus, X, Send, Copy, Check,
+  RotateCcw, Download, Bot, Folder, Cookie, Eye, Lock,
   Code2, FileUp, Braces, AlignLeft, HelpCircle, FileJson, Layers, Trash2,
   Bookmark, BookmarkPlus, Share2, Route as RouteIcon,
   FlaskConical, SlidersHorizontal, ShieldAlert, Terminal, Globe, Info,
@@ -83,6 +85,7 @@ interface RequestTab {
   workspaceId: string;
   /** '' = inherit workspace env · 'none' = no environment · otherwise an env id */
   envId: string;
+  operationId?: string;
   params: KVRow[];
   pathParams: KVRow[];
   headers: KVRow[];
@@ -380,50 +383,61 @@ function KVTable({ rows, onChange, ph = ['Key', 'Value'], readOnlyKey = false, k
     onChange(next);
   };
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="rounded-lg border border-[var(--border)] overflow-hidden">
       {rows.map((row, i) => (
-        <div key={i} className="flex items-center gap-1.5">
-          <input
-            type="checkbox" checked={row.enabled}
-            onChange={e => upd(i, 'enabled', e.target.checked)}
-            className="checkbox flex-shrink-0"
-          />
-          {readOnlyKey ? (
-            <div className="flex items-center h-7 px-2.5 rounded-md bg-[var(--elevated)] border border-[var(--border)] flex-1 min-w-0">
-              <span className="font-mono text-[12px] text-[var(--foreground)] truncate">{row.key}</span>
-            </div>
-          ) : keySuggestions ? (
-            <SuggestInput
-              value={row.key}
-              onChange={v => upd(i, 'key', v)}
-              suggestions={keySuggestions}
-              placeholder={ph[0]}
-            />
-          ) : (
-            <input
-              className="input flex-1 h-7 text-[12.5px] font-mono"
-              placeholder={ph[0]} value={row.key}
-              onChange={e => upd(i, 'key', e.target.value)}
-            />
+        <div
+          key={i}
+          className={cn(
+            'flex items-stretch group hover:bg-[color-mix(in_srgb,var(--foreground)_2%,transparent)] transition-colors',
+            i < rows.length - 1 && 'border-b border-[var(--border)]',
+            !row.enabled && 'opacity-40',
           )}
-          {valueSuggestions ? (
-            <div className="flex-[2] min-w-0 flex">
-              <SuggestInput
-                value={row.value}
-                onChange={v => upd(i, 'value', v)}
-                suggestions={valueSuggestions(row.key)}
-                placeholder={ph[1]}
+        >
+          {/* Enabled toggle */}
+          <div className="flex items-center justify-center w-8 border-r border-[var(--border)] flex-shrink-0">
+            <input
+              type="checkbox" checked={row.enabled}
+              onChange={e => upd(i, 'enabled', e.target.checked)}
+              className="checkbox"
+            />
+          </div>
+
+          {/* Key */}
+          <div className="flex-1 min-w-0 border-r border-[var(--border)]">
+            {readOnlyKey ? (
+              <div className="flex items-center h-8 px-3">
+                <span className="font-mono text-[12px] text-[var(--foreground)] truncate">{row.key}</span>
+              </div>
+            ) : keySuggestions ? (
+              <SuggestInput value={row.key} onChange={v => upd(i, 'key', v)} suggestions={keySuggestions} placeholder={ph[0]} />
+            ) : (
+              <input
+                className="w-full h-8 bg-transparent border-0 outline-none px-3 text-[12px] font-mono text-[var(--foreground)] placeholder:text-[var(--placeholder-foreground)]"
+                placeholder={ph[0]} value={row.key}
+                onChange={e => upd(i, 'key', e.target.value)}
               />
-            </div>
-          ) : (
-            <input
-              className="input flex-[2] h-7 text-[12.5px] font-mono"
-              placeholder={ph[1]} value={row.value}
-              onChange={e => upd(i, 'value', e.target.value)}
-            />
-          )}
+            )}
+          </div>
+
+          {/* Value */}
+          <div className="flex-[2] min-w-0">
+            {valueSuggestions ? (
+              <SuggestInput value={row.value} onChange={v => upd(i, 'value', v)} suggestions={valueSuggestions(row.key)} placeholder={ph[1]} />
+            ) : (
+              <input
+                className="w-full h-8 bg-transparent border-0 outline-none px-3 text-[12px] font-mono text-[var(--foreground)] placeholder:text-[var(--placeholder-foreground)]"
+                placeholder={ph[1]} value={row.value}
+                onChange={e => upd(i, 'value', e.target.value)}
+              />
+            )}
+          </div>
+
+          {/* Delete */}
           {!readOnlyKey && rows.length > 1 && (
-            <button className="btn btn-ghost btn-icon btn-sm flex-shrink-0 text-[var(--placeholder-foreground)]" onClick={() => onChange(rows.filter((_, j) => j !== i))}>
+            <button
+              className="flex items-center justify-center w-7 border-l border-[var(--border)] flex-shrink-0 opacity-0 group-hover:opacity-100 text-[var(--placeholder-foreground)] hover:text-[var(--destructive)] transition-all"
+              onClick={() => onChange(rows.filter((_, j) => j !== i))}
+            >
               <X size={11} />
             </button>
           )}
@@ -996,37 +1010,141 @@ function CookiesPanel({ domain }: { domain: string }) {
   );
 }
 
-// ── Endpoint Tree ──────────────────────────────────────────────────────────
+// ── Endpoint Tree (@pierre/trees) ─────────────────────────────────────────
+
+const EP_TREE_CSS = `
+  button[data-type="item"][data-item-path$="/GET"] [data-item-section="content"] { color: #4ade80; font-weight: 600; letter-spacing: 0.04em; }
+  button[data-type="item"][data-item-path$="/POST"] [data-item-section="content"] { color: #fb923c; font-weight: 600; letter-spacing: 0.04em; }
+  button[data-type="item"][data-item-path$="/PUT"] [data-item-section="content"] { color: #818cf8; font-weight: 600; letter-spacing: 0.04em; }
+  button[data-type="item"][data-item-path$="/PATCH"] [data-item-section="content"] { color: #fbbf24; font-weight: 600; letter-spacing: 0.04em; }
+  button[data-type="item"][data-item-path$="/DELETE"] [data-item-section="content"] { color: #f87171; font-weight: 600; letter-spacing: 0.04em; }
+  button[data-type="item"][data-item-path$="/HEAD"] [data-item-section="content"],
+  button[data-type="item"][data-item-path$="/OPTIONS"] [data-item-section="content"] { color: #94a3b8; font-weight: 600; letter-spacing: 0.04em; }
+`;
+
+const LS_TREE_EXPANDED = 'ep_tree_expanded';
+function loadTreeExpanded(): string[] {
+  try { return JSON.parse(localStorage.getItem(LS_TREE_EXPANDED) ?? '[]'); } catch { return []; }
+}
+function saveTreeExpanded(paths: string[]) {
+  try { localStorage.setItem(LS_TREE_EXPANDED, JSON.stringify(paths)); } catch {}
+}
+function getDirPaths(filePaths: string[]): string[] {
+  const dirs = new Set<string>();
+  for (const p of filePaths) {
+    const segs = p.split('/');
+    for (let i = 1; i < segs.length; i++) dirs.add(segs.slice(0, i).join('/'));
+  }
+  return Array.from(dirs);
+}
+
+function buildTreePaths(ops: ParsedOperation[]) {
+  const paths: string[] = [];
+  const pathToOp = new Map<string, ParsedOperation>();
+  const opToPath = new Map<string, string>();
+  const seen = new Set<string>();
+  for (const op of ops) {
+    const segments = op.path.replace(/^\//, '').split('/').filter(Boolean);
+    let p = [...segments, op.method.toUpperCase()].join('/');
+    if (seen.has(p)) { let i = 2; while (seen.has(`${p}_${i}`)) i++; p = `${p}_${i}`; }
+    seen.add(p);
+    paths.push(p);
+    pathToOp.set(p, op);
+    opToPath.set(op.operationId, p);
+  }
+  return { paths, pathToOp, opToPath };
+}
+
 function EndpointTree({ ops, onSelect, activeId, onContextMenu }: {
   ops: ParsedOperation[]; onSelect: (op: ParsedOperation) => void; activeId?: string;
   onContextMenu?: (e: React.MouseEvent, op: ParsedOperation) => void;
 }) {
   const [search, setSearch] = useState('');
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [treeHeight, setTreeHeight] = useState(400);
 
-  const filtered = ops.filter(op =>
-    !search ||
-    op.path.toLowerCase().includes(search.toLowerCase()) ||
-    (op.summary ?? '').toLowerCase().includes(search.toLowerCase()) ||
-    op.operationId.toLowerCase().includes(search.toLowerCase())
-  );
+  // Measure container height for virtualization
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      setTreeHeight(entries[0]?.contentRect.height ?? 400);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
-  const groups: Record<string, ParsedOperation[]> = {};
-  for (const op of filtered) {
-    const tag = op.tags[0] ?? 'default';
-    if (!groups[tag]) groups[tag] = [];
-    groups[tag]!.push(op);
-  }
+  // Stable callback refs
+  const onSelectRef = useRef(onSelect);
+  const onContextMenuRef = useRef(onContextMenu);
+  onSelectRef.current = onSelect;
+  onContextMenuRef.current = onContextMenu;
 
-  const MC: Record<string, string> = {
-    GET: 'var(--method-get)', POST: 'var(--method-post)', PUT: 'var(--method-put)',
-    PATCH: 'var(--method-patch)', DELETE: 'var(--method-delete)',
-    HEAD: 'var(--method-head)', OPTIONS: 'var(--method-head)',
-  };
+  const filteredOps = useMemo(() => {
+    if (!search.trim()) return ops;
+    const q = search.toLowerCase();
+    return ops.filter(op =>
+      op.path.toLowerCase().includes(q) ||
+      (op.summary ?? '').toLowerCase().includes(q) ||
+      op.operationId.toLowerCase().includes(q) ||
+      op.method.toLowerCase() === q,
+    );
+  }, [ops, search]);
+
+  const { paths, pathToOp, opToPath } = useMemo(() => buildTreePaths(filteredOps), [filteredOps]);
+  const pathToOpRef = useRef(pathToOp);
+  const opToPathRef = useRef(opToPath);
+  pathToOpRef.current = pathToOp;
+  opToPathRef.current = opToPath;
+
+  const lastOpRef = useRef<ParsedOperation | null>(null);
+  const pathsRef = useRef(paths);
+  pathsRef.current = paths;
+  // Suppress onSelectionChange when the select() call came from our own useEffect
+  const programmaticSelectRef = useRef(false);
+
+  const { model } = useFileTree({
+    paths,
+    initialExpansion: 'closed',
+    flattenEmptyDirectories: false,
+    density: 'compact',
+    stickyFolders: false,
+    onSelectionChange: (selected) => {
+      if (programmaticSelectRef.current) { programmaticSelectRef.current = false; return; }
+      const op = pathToOpRef.current.get(selected[0] ?? '');
+      if (op) { lastOpRef.current = op; onSelectRef.current(op); }
+    },
+    unsafeCSS: EP_TREE_CSS,
+  });
+
+  // Restore saved expansion on mount and after every filter reset
+  useEffect(() => {
+    model.resetPaths(paths, { initialExpandedPaths: loadTreeExpanded() });
+  }, [model, paths]);
+
+  // Persist expansion state whenever the tree changes
+  useEffect(() => {
+    return model.subscribe(() => {
+      const dirs = getDirPaths(pathsRef.current);
+      const expanded = dirs.filter(p => {
+        try {
+          const it = model.getItem(p);
+          return it != null && 'isExpanded' in it && (it as { isExpanded(): boolean }).isExpanded();
+        } catch { return false; }
+      });
+      saveTreeExpanded(expanded);
+    });
+  }, [model]);
+
+  useEffect(() => {
+    if (!activeId) return;
+    const p = opToPathRef.current.get(activeId);
+    if (!p) return;
+    try { const it = model.getItem(p); if (it && !it.isSelected()) { programmaticSelectRef.current = true; it.select(); model.scrollToPath(p, { offset: 'nearest' }); } } catch { /**/ }
+  }, [activeId, model, paths]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Search bar */}
       <div className="px-2 py-2 border-b border-[var(--border)] flex-shrink-0">
         <div className="relative flex items-center">
           <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--placeholder-foreground)] pointer-events-none" />
@@ -1037,46 +1155,36 @@ function EndpointTree({ ops, onSelect, activeId, onContextMenu }: {
             onChange={e => setSearch(e.target.value)}
           />
           <span className="absolute right-2 text-[10px] text-[var(--placeholder-foreground)] font-mono pointer-events-none select-none">
-            {filtered.length === ops.length ? ops.length : `${filtered.length}/${ops.length}`}
+            {filteredOps.length === ops.length ? ops.length : `${filteredOps.length}/${ops.length}`}
           </span>
         </div>
       </div>
 
-      {/* Endpoint list */}
-      <div className="flex-1 overflow-y-auto">
-        {Object.entries(groups).map(([tag, tagOps]) => (
-          <div key={tag} className="ep-group">
-            {/* Group header */}
-            <button
-              onClick={() => setCollapsed(c => ({ ...c, [tag]: !c[tag] }))}
-              className="ep-group-header"
-            >
-              {collapsed[tag]
-                ? <ChevronRight size={9} className="flex-shrink-0 opacity-40" />
-                : <ChevronDown size={9} className="flex-shrink-0 opacity-40" />}
-              <span className="flex-1 text-left truncate">{tag.toLowerCase().replace(/_/g, ' ')}</span>
-              <span className="ep-count">{tagOps.length}</span>
-            </button>
-
-            {/* Endpoint rows */}
-            {!collapsed[tag] && tagOps.map(op => {
-              const isActive = activeId === op.operationId;
-              const color = MC[op.method.toUpperCase()] ?? 'var(--muted-foreground)';
-              return (
-                <button
-                  key={`${op.method}_${op.path}`}
-                  onClick={() => onSelect(op)}
-                  onContextMenu={e => onContextMenu?.(e, op)}
-                  className={cn('ep-row', isActive && 'active')}
-                >
-                  <span className="ep-method" style={{ color }}>{op.method.toUpperCase()}</span>
-                  <span className="ep-path">{op.path}</span>
-                </button>
-              );
-            })}
-          </div>
-        ))}
-        {filtered.length === 0 && (
+      <div
+        ref={containerRef}
+        className="flex-1 min-h-0"
+        onContextMenu={e => {
+          const op = lastOpRef.current;
+          if (op) { e.preventDefault(); onContextMenuRef.current?.(e, op); }
+        }}
+      >
+        {filteredOps.length > 0 ? (
+          <PierreFileTree
+            model={model}
+            style={{
+              display: 'block',
+              height: treeHeight,
+              '--trees-bg-override': 'transparent',
+              '--trees-fg-override': 'var(--foreground)',
+              '--trees-fg-muted-override': 'var(--muted-foreground)',
+              '--trees-font-family-override': 'inherit',
+              '--trees-font-size-override': '12px',
+              '--trees-border-color-override': 'var(--border)',
+              '--trees-accent-override': 'color-mix(in srgb, var(--foreground) 8%, transparent)',
+              '--trees-border-radius-override': '4px',
+            } as React.CSSProperties}
+          />
+        ) : (
           <div className="empty-state">
             <Search size={18} className="opacity-30" />
             <span className="text-[12px]">No endpoints match</span>
@@ -1318,26 +1426,35 @@ function ResponsePanel({ response, loading }: { response: ResponseResult | null;
     <div className="flex-1 flex flex-col overflow-hidden">
 
       {/* ── Row 1: status meta + actions */}
-      <div className="flex items-center gap-3 px-3 border-b border-[var(--border)] bg-[var(--card)] flex-shrink-0" style={{ height: 34 }}>
+      <div className="flex items-center gap-3 px-3 border-b border-[var(--border)] bg-[var(--background)] flex-shrink-0" style={{ height: 36 }}>
         {/* Status badge */}
-        <span className={cn('font-bold text-[13px] font-mono flex-shrink-0', scClass(response.status))}>
+        <span className={cn(
+          'inline-flex items-center px-2 py-0.5 rounded-md text-[11.5px] font-semibold font-mono flex-shrink-0',
+          response.status < 300
+            ? 'bg-[color-mix(in_srgb,var(--success)_12%,transparent)] text-[var(--success)]'
+            : response.status < 400
+            ? 'bg-[color-mix(in_srgb,var(--info)_12%,transparent)] text-[var(--info)]'
+            : response.status < 500
+            ? 'bg-[color-mix(in_srgb,var(--warning)_12%,transparent)] text-[var(--warning)]'
+            : 'bg-[color-mix(in_srgb,var(--destructive)_12%,transparent)] text-[var(--destructive)]',
+        )}>
           {response.status}
         </span>
 
-        {/* Meta pills */}
-        <div className="flex items-center gap-2 text-[11px] text-[var(--placeholder-foreground)] flex-shrink-0">
-          <span className="flex items-center gap-1"><Clock size={10} />{response.latency}ms</span>
-          <span className="text-[var(--border)]">·</span>
-          <span>{fmtSize(response.size)}</span>
+        {/* Meta */}
+        <div className="flex items-center gap-2.5 text-[11px] text-[var(--muted-foreground)] flex-shrink-0">
+          <span className="flex items-center gap-1 tabular-nums"><Clock size={10} className="opacity-60" />{response.latency}ms</span>
+          <span className="opacity-30 select-none">·</span>
+          <span className="tabular-nums">{fmtSize(response.size)}</span>
           {contentType && (
             <>
-              <span className="text-[var(--border)]">·</span>
-              <span className="font-mono truncate max-w-[140px]" title={contentType}>{contentType.split(';')[0]}</span>
+              <span className="opacity-30 select-none">·</span>
+              <span className="font-mono text-[10.5px] opacity-70 truncate max-w-[160px]" title={contentType}>{contentType.split(';')[0]}</span>
             </>
           )}
           {response.redirectedTo && (
             <>
-              <span className="text-[var(--border)]">·</span>
+              <span className="opacity-30 select-none">·</span>
               <span className="text-[var(--warning,#f59e0b)] truncate max-w-[160px]" title={response.redirectedTo}>↪ {response.redirectedTo}</span>
             </>
           )}
@@ -1399,7 +1516,7 @@ function ResponsePanel({ response, loading }: { response: ResponseResult | null;
       </div>
 
       {/* ── Row 2: tabs */}
-      <div className="flex items-center gap-[2px] px-1.5 border-b border-[var(--border)] bg-[var(--background)] flex-shrink-0" style={{ height: 32 }}>
+      <div className="sub-tab-bar">
         {tabs.map(t => (
           <button key={t.id} className={cn('sub-tab', view === t.id && 'active')} onClick={() => setView(t.id)}>
             {t.label}
@@ -1913,6 +2030,10 @@ function ExplorerPage() {
     try { localStorage.setItem('endpoint_panel_open', next ? '1' : '0'); } catch {}
     return next;
   });
+  const [leftPanelWidth, setLeftPanelWidth] = useState(() => {
+    try { return parseInt(localStorage.getItem('ep_panel_width') ?? '240', 10); } catch { return 240; }
+  });
+  const [leftResizing, setLeftResizing] = useState(false);
 
   interface CtxMenu { x: number; y: number; tabId: string }
   interface EpCtxMenu { x: number; y: number; op: ParsedOperation }
@@ -1950,6 +2071,12 @@ function ExplorerPage() {
   const activeTabRef = useRef(activeTabId);
   useEffect(() => { tabsRef.current = tabs; });
   useEffect(() => { activeTabRef.current = activeTabId; });
+
+  // Sync tree selection when switching tabs
+  useEffect(() => {
+    const opId = tabs.find(t => t.id === activeTabId)?.operationId;
+    setActiveOpId(opId);
+  }, [activeTabId]);
 
   useEffect(() => {
     import('../components/ExplorerHotkeys').then(m => setExplorerHotkeys(() => m.ExplorerHotkeys));
@@ -2046,7 +2173,14 @@ function ExplorerPage() {
   // ── Load operations ───────────────────────────────────────────────────────
   const refreshBaseUrl = () => {
     apiClient<{ spec: { baseUrl: string } | null }>('/api/status')
-      .then(s => { if (s.spec) setBaseUrl(s.spec.baseUrl); })
+      .then(s => {
+        if (s.spec) {
+          setBaseUrl(s.spec.baseUrl);
+          setSpecVars({ baseUrl: s.spec.baseUrl });
+        } else {
+          setSpecVars({});
+        }
+      })
       .catch(() => {});
   };
 
@@ -2095,28 +2229,35 @@ function ExplorerPage() {
   const closeTab = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const visible = tabs.filter(t => (t.workspaceId ?? DEFAULT_WORKSPACE_ID) === activeWsId && t.id !== id);
-    setTabs(prev => {
-      const next = prev.filter(t => t.id !== id);
-      return next.length ? next : [blankTab()];
-    });
     if (activeTabId === id) {
       if (visible.length) {
         const idx = tabs.findIndex(t => t.id === id);
         setActiveTabId((visible[Math.max(0, Math.min(idx - 1, visible.length - 1))] ?? visible[0]!).id);
+        setTabs(prev => prev.filter(t => t.id !== id));
       } else {
         const fresh = blankTab();
-        setTabs(p => [...p.filter(t => t.id !== id), fresh]);
+        setTabs(prev => [...prev.filter(t => t.id !== id), fresh]);
         setActiveTabId(fresh.id);
       }
+    } else {
+      setTabs(prev => prev.filter(t => t.id !== id));
     }
   };
 
   const closeTabById = (id: string) => {
     const visible = tabs.filter(t => (t.workspaceId ?? DEFAULT_WORKSPACE_ID) === activeWsId && t.id !== id);
-    setTabs(prev => { const next = prev.filter(t => t.id !== id); return next.length ? next : [blankTab()]; });
     if (activeTabId === id) {
-      if (visible.length) { const idx = tabs.findIndex(t => t.id === id); setActiveTabId((visible[Math.max(0, Math.min(idx - 1, visible.length - 1))] ?? visible[0]!).id); }
-      else { const fresh = blankTab(); setTabs(p => [...p.filter(t => t.id !== id), fresh]); setActiveTabId(fresh.id); }
+      if (visible.length) {
+        const idx = tabs.findIndex(t => t.id === id);
+        setActiveTabId((visible[Math.max(0, Math.min(idx - 1, visible.length - 1))] ?? visible[0]!).id);
+        setTabs(prev => prev.filter(t => t.id !== id));
+      } else {
+        const fresh = blankTab();
+        setTabs(prev => [...prev.filter(t => t.id !== id), fresh]);
+        setActiveTabId(fresh.id);
+      }
+    } else {
+      setTabs(prev => prev.filter(t => t.id !== id));
     }
   };
   const closeOtherTabs = (keepId: string) => {
@@ -2145,8 +2286,9 @@ function ExplorerPage() {
 
   const openEndpoint = (op: ParsedOperation) => {
     setActiveOpId(op.operationId);
-    const url = (baseUrl + op.path).replace(/([^:])\/\//g, '$1/');
-    const pathParams = syncPathParams(url, []);
+    const urlBase = baseUrl ? '{{baseUrl}}' : '';
+    const url = (urlBase + op.path).replace(/([^:])\/\//g, '$1/');
+    const pathParams = syncPathParams(op.path, []);
     const qp: KVRow[] = op.parameters.filter(p => p.in === 'query').map(p => ({ key: p.name, value: '', enabled: true }));
     const hdrs: KVRow[] = [{ key: '', value: '', enabled: true }];
     if (op.requestBody) hdrs.unshift({ key: 'Content-Type', value: op.requestBody.contentType, enabled: true });
@@ -2160,7 +2302,7 @@ function ExplorerPage() {
       else bodyType = 'raw';
       body = bodyType === 'json' ? JSON.stringify(schemaToExample(op.requestBody.schema), null, 2) : '';
     }
-    const t = blankTab({ title: op.summary ?? op.path, method: op.method.toUpperCase(), url, pathParams, params: [...qp, { key: '', value: '', enabled: true }], headers: hdrs, body, bodyType });
+    const t = blankTab({ title: op.summary ?? op.path, method: op.method.toUpperCase(), url, pathParams, params: [...qp, { key: '', value: '', enabled: true }], headers: hdrs, body, bodyType, operationId: op.operationId });
     setTabs(p => [...p, t]);
     setActiveTabId(t.id);
     if (op.requestBody || qp.length) setReqTab(op.requestBody ? 'body' : 'params');
@@ -2282,6 +2424,26 @@ function ExplorerPage() {
     }
   };
   sendRef.current = send;
+
+  const startLeftResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setLeftResizing(true);
+    const startX = e.clientX;
+    const startW = leftPanelWidth;
+    let lastWidth = startW;
+    const onMove = (ev: MouseEvent) => {
+      lastWidth = Math.max(160, Math.min(480, startW + (ev.clientX - startX)));
+      setLeftPanelWidth(lastWidth);
+    };
+    const onUp = () => {
+      setLeftResizing(false);
+      try { localStorage.setItem('ep_panel_width', String(lastWidth)); } catch {}
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
 
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -2430,7 +2592,11 @@ function ExplorerPage() {
 
         {/* ── Left panel: endpoint tree */}
         {endpointPanelOpen && (
-          <div className="w-[240px] min-w-[180px] border-r border-[var(--border)] flex flex-col overflow-hidden bg-[var(--sidebar)] flex-shrink-0">
+          <div
+            className="flex flex-row flex-shrink-0 overflow-hidden"
+            style={{ width: leftPanelWidth }}
+          >
+          <div className="flex-1 border-r border-[var(--border)] flex flex-col overflow-hidden bg-[var(--sidebar)]">
             {/* Panel header with tab toggle */}
             <div className="flex items-center h-[36px] px-2 border-b border-[var(--border)] flex-shrink-0 gap-0.5">
               <button
@@ -2502,6 +2668,15 @@ function ExplorerPage() {
               </div>
             )}
           </div>
+          {/* Resize handle */}
+          <div
+            onMouseDown={startLeftResize}
+            className={cn(
+              'w-1 flex-shrink-0 cursor-col-resize hover:bg-[color-mix(in_srgb,var(--foreground)_15%,transparent)] transition-colors',
+              leftResizing && 'bg-[color-mix(in_srgb,var(--foreground)_20%,transparent)]',
+            )}
+          />
+          </div>
         )}
 
         {/* ── Main panel */}
@@ -2535,7 +2710,7 @@ function ExplorerPage() {
                     onClick={e => closeTab(t.id, e)}
                     className={cn(
                       'ml-0.5 flex items-center justify-center w-3.5 h-3.5 rounded transition-all flex-shrink-0 bg-transparent border-0 cursor-pointer text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
-                      t.id === activeTabId ? 'opacity-40 hover:opacity-100' : 'opacity-0 group-hover:opacity-60 hover:!opacity-100',
+                      t.id === activeTabId ? 'opacity-50 hover:opacity-100' : 'opacity-20 group-hover:opacity-60 hover:!opacity-100',
                     )}
                   >
                     <X size={10} />
@@ -2561,7 +2736,7 @@ function ExplorerPage() {
               style={{
                 border: '1px solid var(--border)',
                 background: 'var(--input-bg)',
-                height: 34,
+                height: 36,
               }}
               onFocusCapture={e => (e.currentTarget.style.borderColor = 'var(--border-focus)')}
               onBlurCapture={e => (e.currentTarget.style.borderColor = 'var(--border)')}
@@ -2575,18 +2750,18 @@ function ExplorerPage() {
                   background: 'transparent',
                   border: 'none',
                   borderRight: '1px solid var(--border)',
-                  padding: '0 6px 0 10px',
+                  padding: '0 8px 0 12px',
                   fontFamily: 'GeistMono, ui-monospace, monospace',
-                  fontSize: 11,
+                  fontSize: 10.5,
                   fontWeight: 700,
-                  letterSpacing: '0.04em',
+                  letterSpacing: '0.06em',
                   outline: 'none',
                   cursor: 'pointer',
                   flexShrink: 0,
                   height: '100%',
                   appearance: 'none',
-                  minWidth: 58,
-                  maxWidth: 74,
+                  minWidth: 62,
+                  maxWidth: 78,
                 }}
               >
                 {METHODS.map(m => <option key={m} value={m}>{m}</option>)}
@@ -2599,14 +2774,14 @@ function ExplorerPage() {
                   height: '100%',
                   background: 'transparent',
                   border: 'none',
-                  padding: '0 10px',
-                  fontSize: 12.5,
+                  padding: '0 12px',
+                  fontSize: 13,
                   fontFamily: 'GeistMono, ui-monospace, monospace',
                   color: 'var(--foreground)',
                   outline: 'none',
                   minWidth: 0,
                 }}
-                placeholder="https://api.example.com/users/{id}"
+                placeholder="{{baseUrl}}/path"
                 value={tab.url}
                 onChange={e => {
                   const url = e.target.value;
@@ -2648,14 +2823,14 @@ function ExplorerPage() {
               disabled={tab.loading || !tab.url}
               style={{
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                gap: 6, height: 34, padding: '0 16px', borderRadius: 8,
-                fontSize: 12.5, fontWeight: 600, letterSpacing: '-0.01em',
-                background: tab.loading ? 'var(--primary)' : 'var(--primary)',
+                gap: 6, height: 36, padding: '0 18px', borderRadius: 8,
+                fontSize: 13, fontWeight: 600, letterSpacing: '-0.01em',
+                background: 'var(--primary)',
                 color: 'var(--primary-foreground)',
                 border: '1px solid var(--primary)',
                 cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap',
                 fontFamily: 'inherit', userSelect: 'none',
-                transition: 'all 0.12s', opacity: !tab.url ? 0.4 : 1,
+                transition: 'opacity 0.12s', opacity: !tab.url ? 0.4 : 1,
                 pointerEvents: !tab.url ? 'none' : 'auto',
               }}
             >
@@ -2667,7 +2842,7 @@ function ExplorerPage() {
             <button
               title="Ask AI (contextual)"
               onClick={() => window.dispatchEvent(new CustomEvent('open-ai-panel'))}
-              className="flex items-center justify-center w-[30px] h-[30px] rounded-md border border-[var(--border)] bg-transparent text-[var(--accent)] hover:bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] hover:border-[color-mix(in_srgb,var(--accent)_40%,transparent)] flex-shrink-0 transition-colors cursor-pointer"
+              className="flex items-center justify-center w-[36px] h-[36px] rounded-md border border-[var(--border)] bg-transparent text-[var(--accent)] hover:bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] hover:border-[color-mix(in_srgb,var(--accent)_40%,transparent)] flex-shrink-0 transition-colors cursor-pointer"
             >
               <Sparkles size={13} />
             </button>
@@ -2675,7 +2850,7 @@ function ExplorerPage() {
             <div className="relative flex-shrink-0">
               <button
                 className={cn(
-                  'flex items-center justify-center w-[30px] h-[30px] rounded-md border transition-colors flex-shrink-0',
+                  'flex items-center justify-center w-[36px] h-[36px] rounded-md border transition-colors flex-shrink-0',
                   moreOpen
                     ? 'border-[var(--border-hover)] bg-[var(--elevated)] text-[var(--foreground)]'
                     : 'border-[var(--border)] bg-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:border-[var(--border-hover)]'
@@ -2863,7 +3038,7 @@ function ExplorerPage() {
               className="flex flex-col overflow-hidden"
               style={splitDir === 'v' ? { height: `${splitPct * 100}%` } : { width: `${splitPct * 100}%` }}
             >
-              <div className={cn('flex-1 overflow-auto', reqTab !== 'body' && reqTab !== 'payload' && reqTab !== 'tests' && 'p-3')}>
+              <div className={cn('flex-1 overflow-auto', reqTab !== 'body' && reqTab !== 'payload' && reqTab !== 'tests' && 'p-3 pb-4')}>
 
                 {reqTab === 'params' && (
                   <div className="flex flex-col gap-0">
@@ -2991,7 +3166,7 @@ function ExplorerPage() {
         <div className="status-bar-sep" />
         {activeEnv ? (
           <button className="status-bar-item">
-            <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: activeEnv.color }} />
+            <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[var(--primary)]" />
             <span>{activeEnv.name}</span>
           </button>
         ) : (
